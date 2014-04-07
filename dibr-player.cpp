@@ -11,9 +11,11 @@
 
 #include <vlc/vlc.h>
 
-const int SCREEN_WIDTH = 1920;
-const int SCREEN_HEIGHT = 1080;
+const int SCREEN_WIDTH = 1024;
+const int SCREEN_HEIGHT = 768;
 const int SCREEN_BPP = 32;
+bool hole_filling = false;
+bool paused = true;
 
 SDL_Event event;
 #define  RADDEG  57.29577951f
@@ -332,7 +334,12 @@ int main(int argc, char* argv[])
             S++;
           else if(event.key.keysym.sym == '-')
             S--;
-
+          else if(event.key.keysym.sym == 'h')
+            hole_filling = !hole_filling;
+          else if(event.key.keysym.sym == SDLK_SPACE)
+          {
+            paused = !paused;
+          }
           break;
       }
     }
@@ -507,10 +514,7 @@ bool shift_surface ( SDL_Surface *image_color, SDL_Surface *image_depth,
 {
 
   SDL_FillRect(left_image, NULL, 0x000000);
-  if(left_image == NULL) {
-    fprintf(stderr, "CreateRGBSurface failed: %s\n", SDL_GetError());
-    exit(1);
-  }
+  SDL_FillRect(right_image, NULL, 0x000000);
 
   // This value is half od the maximun shift
   // Maximun shift comes at depth == 0
@@ -551,37 +555,38 @@ bool shift_surface ( SDL_Surface *image_color, SDL_Surface *image_depth,
       // putpixel (left_image, x, y, getpixel (image_color, x, y) );
     }
 
-    for (int x = 1; x < cols; x++)
+    if(hole_filling)
     {
-      if ( mask[y][x] == 0 )
+      for (int x = 1; x < cols; x++)
       {
-        if ( x - 7 < 0)
+        if ( mask[y][x] == 0 )
         {
-          putpixel (left_image, x, y, getpixel(image_color, x, y));
-        }
-        else
-        {
-          Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
-          for (int x1 = x-7; x1 <= x-4; x1++)
+          if ( x - 7 < 0)
           {
-            Uint32 pixel = getpixel(left_image, x1, y);
-            Uint8 r, g, b;
-            SDL_GetRGB (pixel, left_image->format, &r, &g, &b);
-            r_sum += r;
-            g_sum += g;
-            b_sum += b;
+            putpixel (left_image, x, y, getpixel(image_color, x, y));
           }
+          else
+          {
+            Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
+            for (int x1 = x-7; x1 <= x-4; x1++)
+            {
+              Uint32 pixel = getpixel(left_image, x1, y);
+              Uint8 r, g, b;
+              SDL_GetRGB (pixel, left_image->format, &r, &g, &b);
+              r_sum += r;
+              g_sum += g;
+              b_sum += b;
+            }
 
-          Uint8 r_new, g_new, b_new;
-          r_new = (Uint8)(r_sum / 4);
-          g_new = (Uint8)(g_sum / 4);
-          b_new = (Uint8)(b_sum / 4);
-          Uint32 pixel_new = SDL_MapRGB(left_image->format, r_new, g_new, b_new);
-          putpixel (left_image, x, y, pixel_new );
+            Uint8 r_new, g_new, b_new;
+            r_new = (Uint8)(r_sum / 4);
+            g_new = (Uint8)(g_sum / 4);
+            b_new = (Uint8)(b_sum / 4);
+            Uint32 pixel_new = SDL_MapRGB(left_image->format, r_new, g_new, b_new);
+            putpixel (left_image, x, y, pixel_new );
+          }
         }
-
       }
-
     }
   }
 
@@ -609,40 +614,41 @@ bool shift_surface ( SDL_Surface *image_color, SDL_Surface *image_depth,
       // putpixel (left_image, x, y, getpixel (image_color, x, y) );
     }
 
-    for (int x = cols-1 ; x >= 0; --x)
+    if(hole_filling)
     {
-      if ( mask[y][x] == 0 )
+      for (int x = cols-1 ; x >= 0; --x)
       {
-        if ( x + 7 > cols - 1)
+        if ( mask[y][x] == 0 )
         {
-          putpixel (right_image, x, y, getpixel(image_color, x, y));
-        }
-        else
-        {
-          Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
-          for (int x1 = x+4; x1 <= x+7; x1++)
+          if ( x + 7 > cols - 1)
           {
-            Uint32 pixel = getpixel(right_image, x1, y);
-            Uint8 r, g, b;
-            SDL_GetRGB (pixel, right_image->format, &r, &g, &b);
-            r_sum += r;
-            g_sum += g;
-            b_sum += b;
+            putpixel (right_image, x, y, getpixel(image_color, x, y));
           }
+          else
+          {
+            Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
+            for (int x1 = x+4; x1 <= x+7; x1++)
+            {
+              Uint32 pixel = getpixel(right_image, x1, y);
+              Uint8 r, g, b;
+              SDL_GetRGB (pixel, right_image->format, &r, &g, &b);
+              r_sum += r;
+              g_sum += g;
+              b_sum += b;
+            }
 
-          Uint8 r_new, g_new, b_new;
-          r_new = (Uint8)(r_sum / 4);
-          g_new = (Uint8)(g_sum / 4);
-          b_new = (Uint8)(b_sum / 4);
-          Uint32 pixel_new = SDL_MapRGB(right_image->format, r_new, g_new, b_new);
-          putpixel (right_image, x, y, pixel_new );
+            Uint8 r_new, g_new, b_new;
+            r_new = (Uint8)(r_sum / 4);
+            g_new = (Uint8)(g_sum / 4);
+            b_new = (Uint8)(b_sum / 4);
+            Uint32 pixel_new = SDL_MapRGB(right_image->format, r_new, g_new, b_new);
+            putpixel (right_image, x, y, pixel_new );
+          }
         }
-
       }
-
     }
-  }
 
+  }
   return true;
 }
 
