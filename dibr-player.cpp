@@ -11,9 +11,14 @@
 
 #include <vlc/vlc.h>
 
-const int SCREEN_WIDTH = 1920;
+/*const int SCREEN_WIDTH = 1920;
 const int SCREEN_HEIGHT = 1080;
 const int SCREEN_BPP = 32;
+*/
+const int SCREEN_WIDTH = 1024;
+const int SCREEN_HEIGHT = 600;
+const int SCREEN_BPP = 32;
+ 
 
 SDL_Event event;
 #define  RADDEG  57.29577951f
