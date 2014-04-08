@@ -20,7 +20,7 @@ LIBS = $(SDL_LIBS) $(GL_LIBS) $(VLC_LIBS)
 CXXFLAGS =	-O2 -g -Wall -fmessage-length=0 $(INCLUDES) 
 
 OBJS =	        dibr-player.cpp
-#BJS =	        dibr-player-image-only.cpp
+#OBJS =	        dibr-player-image-only.cpp
 
 TARGET =        dibr-player
 

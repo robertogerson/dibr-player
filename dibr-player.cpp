@@ -11,9 +11,18 @@
 
 #include <vlc/vlc.h>
 
+
+/*
 const int SCREEN_WIDTH = 1024;
 const int SCREEN_HEIGHT = 768;
 const int SCREEN_BPP = 32;
+*/
+
+const int SCREEN_WIDTH = 1024;
+const int SCREEN_HEIGHT = 600;
+const int SCREEN_BPP = 32;
+
+
 bool hole_filling = false;
 bool paused = true;
 
