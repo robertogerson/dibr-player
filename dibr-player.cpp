@@ -11,22 +11,11 @@
 
 #include <vlc/vlc.h>
 
-<<<<<<< HEAD
-/*const int SCREEN_WIDTH = 1920;
-const int SCREEN_HEIGHT = 1080;
-const int SCREEN_BPP = 32;
-*/
-const int SCREEN_WIDTH = 1024;
-const int SCREEN_HEIGHT = 600;
-const int SCREEN_BPP = 32;
- 
-=======
 const int SCREEN_WIDTH = 1024;
 const int SCREEN_HEIGHT = 768;
 const int SCREEN_BPP = 32;
 bool hole_filling = false;
 bool paused = true;
->>>>>>> 220606125bb93a91a95b0584dc67635f7a8d41de
 
 SDL_Event event;
 #define  RADDEG  57.29577951f
