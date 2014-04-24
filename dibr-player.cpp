@@ -12,8 +12,8 @@
 
 #include <vlc/vlc.h>
 
-const int SCREEN_WIDTH = 1024;
-const int SCREEN_HEIGHT = 768;
+const int SCREEN_WIDTH = 1600;
+const int SCREEN_HEIGHT = 900;
 const int SCREEN_BPP = 32;
 bool hole_filling = false;
 bool paused = true;
@@ -139,7 +139,7 @@ bool init()
   }
 
   if (SDL_SetVideoMode( SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_BPP,
-                        /* SDL_FULLSCREEN | */ SDL_OPENGL) == NULL )
+                        SDL_FULLSCREEN | SDL_OPENGL) == NULL )
   {
     return false;
   }
@@ -385,6 +385,7 @@ int main(int argc, char* argv[])
           else if(event.key.keysym.sym == SDLK_SPACE)
           {
             paused = !paused;
+            libvlc_media_player_set_pause(mp, paused);
           }
           break;
       }
