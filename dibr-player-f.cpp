@@ -515,9 +515,9 @@ void get_YUV(Uint8 r, Uint8 g, Uint8 b, int &Y, int &U, int &V)
 
 void get_RGB( int Y, int U, int V, Uint8 &r, Uint8 &g, Uint8 &b)
 {
-  r = 0.333*Y + 0.333*U + 0.333*V;
-  g = 0.333*Y + 0.333*U + 0.333*V;
-  b = 0.333*Y + 0.333*U + 0.333*V;
+  r = 1.0*Y +     0*U + 1.140*V;
+  g = 1.0*Y - 0.395*U - 0.581*V;
+  b = 1.0*Y + 2.032*U +     0*V;
  }
 
 
