@@ -12,8 +12,8 @@
 
 #include <vlc/vlc.h>
 
-const int SCREEN_WIDTH = 1600;
-const int SCREEN_HEIGHT = 900;
+const int SCREEN_WIDTH = 1024;
+const int SCREEN_HEIGHT = 768;
 const int SCREEN_BPP = 32;
 bool hole_filling = false;
 bool paused = true;
@@ -27,16 +27,13 @@ const double gauss_kernel [3][3] =
  {{0.01134, 0.08382, 0.01134}, 
 {0.08382, 0.61935, 0.08382}, 
 {0.01134, 0.08382, 0.01134}}; 
-
 //FCI
-
-
 
 SDL_Event event;
 #define  RADDEG  57.29577951f
 
 /* Crop a SDL_Surface */
-SDL_Surface* crop_surface( SDL_Surface* sprite_sheet,
+SDL_Surface* crop_surface( SDL_Surface* orig, SDL_Surface *dest,
                            int x, int y,
                            unsigned int width, unsigned int height);
 
@@ -139,7 +136,7 @@ bool init()
   }
 
   if (SDL_SetVideoMode( SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_BPP,
-                        SDL_FULLSCREEN | SDL_OPENGL) == NULL )
+                        /* SDL_FULLSCREEN | */ SDL_OPENGL) == NULL )
   {
     return false;
   }
@@ -216,17 +213,33 @@ int main(int argc, char* argv[])
 
   SDL_Surface *image = ctx.surf;
 
-  SDL_Surface *image_color = crop_surface( image,
-                                           0, 0,
-                                           image->w/2, image->h);
+  SDL_Surface *image_color = SDL_CreateRGBSurface( image->flags,
+                                                   image->w/2, image->h,
+                                                   image->format->BitsPerPixel,
+                                                   image->format->Rmask,
+                                                   image->format->Gmask,
+                                                   image->format->Bmask,
+                                                   image->format->Amask );
+  crop_surface( image, image_color, 0, 0, image->w/2, image->h );
 
-  SDL_Surface *image_depth = crop_surface( image,
-                                           image->w/2, 0,
-                                           image->w/2, image->h);
+  SDL_Surface *image_depth = SDL_CreateRGBSurface( image->flags,
+                                                   image->w/2, image->h,
+                                                   image->format->BitsPerPixel,
+                                                   image->format->Rmask,
+                                                   image->format->Gmask,
+                                                   image->format->Bmask,
+                                                   image->format->Amask );
+  crop_surface( image, image_depth, image->w/2, 0, image->w/2, image->h);
+
 // FCI
-  SDL_Surface *image_depth2 = crop_surface( image,
-                                          image->w/2, 0,
-                                          image->w/2, image->h);
+  SDL_Surface *image_depth2 = SDL_CreateRGBSurface( image->flags,
+                                                    image->w/2, image->h,
+                                                    image->format->BitsPerPixel,
+                                                    image->format->Rmask,
+                                                    image->format->Gmask,
+                                                    image->format->Bmask,
+                                                    image->format->Amask );
+  crop_surface( image, image_depth2, image->w/2, 0, image->w/2, image->h);
 
 
 // Apply filter to image_depth after crop FCI
@@ -293,20 +306,10 @@ int main(int argc, char* argv[])
   while(quit == false)
   {
     SDL_LockMutex(ctx.mutex);
-    image_color = crop_surface( image,
-                                0, 0,
-                                image->w/2, image->h);
-
-    image_depth = crop_surface( image,
-                                image->w/2, 0,
-                                image->w/2, image->h);
-    
+    crop_surface( image, image_color, 0, 0, image->w/2, image->h);
+    crop_surface( image, image_depth, image->w/2, 0, image->w/2, image->h);
     //FCI just have a copy to work with
-    image_depth2 = crop_surface( image,
-                                image->w/2, 0,
-                                image->w/2, image->h);
-
-  
+    crop_surface( image, image_depth2, image->w/2, 0, image->w/2, image->h);
     SDL_UnlockMutex(ctx.mutex);
 
     // Generate stereo image
@@ -350,19 +353,19 @@ int main(int argc, char* argv[])
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
     // Bind the texture to which subsequent calls refer to
     glBindTexture( GL_TEXTURE_2D, TextureID);
-    glBegin( GL_QUADS );
-    //Bottom-left vertex (corner)
-    glTexCoord2i( 0, 0 );
-    glVertex3f( 0.f, 0.f, 0.0f );
-    //Bottom-right vertex (corner)
-    glTexCoord2i( 1, 0 );
-    glVertex3f( SCREEN_WIDTH, 0.f, 0.f );
-    //Top-right vertex (corner)
-    glTexCoord2i( 1, 1 );
-    glVertex3f( SCREEN_WIDTH, SCREEN_HEIGHT, 0.f );
-    //Top-left vertex (corner)
-    glTexCoord2i( 0, 1 );
-    glVertex3f( 0.f, SCREEN_HEIGHT, 0.f );
+      glBegin( GL_QUADS );
+      //Bottom-left vertex (corner)
+      glTexCoord2i( 0, 0 );
+      glVertex3f( 0.f, 0.f, 0.0f );
+      //Bottom-right vertex (corner)
+      glTexCoord2i( 1, 0 );
+      glVertex3f( SCREEN_WIDTH, 0.f, 0.f );
+      //Top-right vertex (corner)
+      glTexCoord2i( 1, 1 );
+      glVertex3f( SCREEN_WIDTH, SCREEN_HEIGHT, 0.f );
+      //Top-left vertex (corner)
+      glTexCoord2i( 0, 1 );
+      glVertex3f( 0.f, SCREEN_HEIGHT, 0.f );
     glEnd();
 
     /****** Check for Key & System input ******/
@@ -397,11 +400,11 @@ int main(int argc, char* argv[])
     var::frame_current_time = SDL_GetTicks();
 
     /****** Frame Rate Handle ******/
-    if((var::frame_current_time - var::frame_start_time) < (1000/60))
+    /*if((var::frame_current_time - var::frame_start_time) < (1000/60))
     {
       var::frame_count = 0;
       SDL_Delay((1000/60) - (var::frame_current_time - var::frame_start_time));
-    }
+    }*/
   }
   /*
    * Stop stream and clean up libVLC
@@ -420,20 +423,14 @@ int main(int argc, char* argv[])
   return 0;
 }
 
-SDL_Surface* crop_surface( SDL_Surface* sprite_sheet,
+SDL_Surface* crop_surface( SDL_Surface* orig,
+                           SDL_Surface* dest,
                            int x, int y,
                            unsigned int width, unsigned int height )
 {
-  SDL_Surface* surface = SDL_CreateRGBSurface( sprite_sheet->flags,
-                                               width, height,
-                                               sprite_sheet->format->BitsPerPixel,
-                                               sprite_sheet->format->Rmask,
-                                               sprite_sheet->format->Gmask,
-                                               sprite_sheet->format->Bmask,
-                                               sprite_sheet->format->Amask );
   SDL_Rect rect = {x, y, width, height};
-  SDL_BlitSurface(sprite_sheet, &rect, surface, 0);
-  return surface;
+  SDL_BlitSurface(orig, &rect, dest, 0);
+  return dest;
 }
 //crop_surface twice would give image_depth2 FCI
 
@@ -659,8 +656,11 @@ int find_shiftMC3(int depth, int Ny)
   return h;
 }
 
-bool shift_surface ( SDL_Surface *image_color, SDL_Surface *image_depth, SDL_Surface *image_depth2,
-                     SDL_Surface *left_image, SDL_Surface *right_image,
+bool shift_surface ( SDL_Surface *image_color,
+                     SDL_Surface *image_depth,
+                     SDL_Surface *image_depth2,
+                     SDL_Surface *left_image,
+                     SDL_Surface *right_image,
                      int S)
 {
 
@@ -681,15 +681,15 @@ bool shift_surface ( SDL_Surface *image_color, SDL_Surface *image_depth, SDL_Sur
   {
     depth_shift_table_lookup[i] = find_shiftMC3(i, N);
   }
-   // enter filter here if necessary FCI***
-   if (depth_filter) {
-                        filter_depth( image_depth,
-                                      image_depth2,
-                                      cols, rows,
-                                      image_depth->w, image_depth->h);
-    };
-    //FCI***
-
+  // enter filter here if necessary FCI***
+  if (depth_filter)
+  {
+    filter_depth( image_depth,
+                  image_depth2,
+                  cols, rows,
+                  image_depth->w, image_depth->h);
+  };
+  //FCI***
 
   // Calculate left image
   // for every pixel change its value
@@ -700,8 +700,6 @@ bool shift_surface ( SDL_Surface *image_color, SDL_Surface *image_depth, SDL_Sur
       // get depth
       // image_depth2 after filter applied FCI
       Uint32 pixel = getpixel(image_depth2, x, y);
-
-
       Uint8 r, g, b;
       SDL_GetRGB (pixel, image_depth2->format, &r, &g, &b);
       int Y, U, V;
