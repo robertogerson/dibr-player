@@ -12,21 +12,28 @@
 
 #include <vlc/vlc.h>
 
-const int SCREEN_WIDTH = 1024;
-const int SCREEN_HEIGHT = 768;
+const int SCREEN_WIDTH = 1920;
+const int SCREEN_HEIGHT = 1080;
 const int SCREEN_BPP = 32;
 bool hole_filling = false;
 bool paused = true;
 
 // FCI
+#define PI 3.14151617
 bool depth_filter = true; 
-int  filterWidth = 3;
-int filterHeight = 3;
+#define gauss_kernel_size 5
+int  sigmax = 10, sigmay = 90;  // assymetric gaussian filter
+double gauss_kernel [gauss_kernel_size][gauss_kernel_size]; 
 
-const double gauss_kernel [3][3] =
- {{0.01134, 0.08382, 0.01134}, 
-{0.08382, 0.61935, 0.08382}, 
-{0.01134, 0.08382, 0.01134}}; 
+void calculate_gauss_kernel()
+{
+  for (int x = 0; x < gauss_kernel_size; x++)
+    for (int y = 0; y < gauss_kernel_size; y++)
+    {
+      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( pow (x, 2) / (2 * pow (sigmax, 2))) *
+                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp ( pow (y, 2) / (2 * pow (sigmay, 2)));
+    }
+}
 //FCI
 
 SDL_Event event;
@@ -74,17 +81,6 @@ static void *lock(void *data, void **p_pixels)
 static void unlock(void *data, void *id, void *const *p_pixels)
 {
   struct ctx *ctx = (struct ctx*)data;
-
-  /* VLC just rendered the video, but we can also render stuff */
-  uint16_t *pixels = (uint16_t *)*p_pixels;
-  int x, y;
-
-  for(y = 10; y < 40; y++)
-    for(x = 10; x < 40; x++)
-      if(x < 13 || y < 13 || x > 36 || y > 36)
-        pixels[y * SCREEN_WIDTH + x] = 0xffff;
-      else
-        pixels[y * SCREEN_WIDTH + x] = 0x0;
 
   SDL_UnlockSurface(ctx->surf);
   SDL_UnlockMutex(ctx->mutex);
@@ -136,7 +132,7 @@ bool init()
   }
 
   if (SDL_SetVideoMode( SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_BPP,
-                        /* SDL_FULLSCREEN | */ SDL_OPENGL) == NULL )
+                        SDL_FULLSCREEN | SDL_OPENGL) == NULL )
   {
     return false;
   }
@@ -162,6 +158,7 @@ void clean_up()
 
 int main(int argc, char* argv[])
 {
+  calculate_gauss_kernel();
   SDL_Surface *surface;
   Uint32 rmask, gmask, bmask, amask;
 
@@ -300,7 +297,7 @@ int main(int argc, char* argv[])
     Mode = GL_RGBA;
   }
 
-  int S = 58;
+  int S = 20; //58;
 
   /****** Main Loop ******/
   while(quit == false)
@@ -316,14 +313,14 @@ int main(int argc, char* argv[])
 //FCI image_depth2
     shift_surface(image_color, image_depth, image_depth2, left_color, right_color, S);
     SDL_FillRect(stereo_color, NULL, 0x000000);
-    SDL_BlitSurface (left_color, NULL, stereo_color, NULL);
+    SDL_BlitSurface (image_depth, NULL, stereo_color, NULL);
 
     SDL_Rect dest;
     dest.x = left_color->w;
     dest.y = 0;
     dest.w = right_color->w;
     dest.h = right_color->h;
-    SDL_BlitSurface (right_color, NULL, stereo_color, &dest);
+    SDL_BlitSurface (image_depth2, NULL, stereo_color, &dest);
 
 
     glTexImage2D( GL_TEXTURE_2D,
@@ -552,8 +549,8 @@ SDL_Surface* filter_depth( SDL_Surface* image_depth,
          r_sum = 0;
          g_sum = 0;
          b_sum = 0;
-          for (int filterX = 0; filterX < filterWidth; filterX++)
-	     for (int filterY = 0; filterY < filterHeight; filterY++)
+          for (int filterX = 0; filterX < gauss_kernel_size; filterX++)
+	     for (int filterY = 0; filterY < gauss_kernel_size; filterY++)
 		{
                 // get original depth around point being calculated
                 neighborX = x - 1 + filterX;
