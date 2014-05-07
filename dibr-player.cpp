@@ -15,24 +15,33 @@
 const int SCREEN_WIDTH = 1920;
 const int SCREEN_HEIGHT = 1080;
 const int SCREEN_BPP = 32;
+bool fullscreen = false;
 bool hole_filling = false;
 bool paused = true;
 
 // FCI
-#define PI 3.14151617
-bool depth_filter = true; 
-#define gauss_kernel_size 5
-int  sigmax = 10, sigmay = 90;  // assymetric gaussian filter
-double gauss_kernel [gauss_kernel_size][gauss_kernel_size]; 
+#define PI 3.141592653589793
 
+bool depth_filter = true; 
+#define gauss_kernel_size 9
+double sigmax = 10.0, sigmay = 90;  // assymetric gaussian filter
+double gauss_kernel [gauss_kernel_size][gauss_kernel_size];
 void calculate_gauss_kernel()
 {
   for (int x = 0; x < gauss_kernel_size; x++)
+  {
     for (int y = 0; y < gauss_kernel_size; y++)
     {
-      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( pow (x, 2) / (2 * pow (sigmax, 2))) *
-                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp ( pow (y, 2) / (2 * pow (sigmay, 2)));
+      int x1 = x - gauss_kernel_size/2;
+      int y1 = y - gauss_kernel_size/2;
+      printf ("(%d, %d) ", x1, y1);
+      gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
+/*      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
+                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp ( -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 * pow (sigmay, 2))); */
+      printf ("%.5f ", gauss_kernel[x][y]);
     }
+    printf ("\n");
+  }
 }
 //FCI
 
@@ -209,6 +218,13 @@ int main(int argc, char* argv[])
                                    0);
 
   SDL_Surface *image = ctx.surf;
+  SDL_Surface *image_all = SDL_CreateRGBSurface( image->flags,
+                                                 image->w, image->h*2,
+                                                 image->format->BitsPerPixel,
+                                                 image->format->Rmask,
+                                                 image->format->Gmask,
+                                                 image->format->Bmask,
+                                                 image->format->Amask );
 
   SDL_Surface *image_color = SDL_CreateRGBSurface( image->flags,
                                                    image->w/2, image->h,
@@ -313,15 +329,22 @@ int main(int argc, char* argv[])
 //FCI image_depth2
     shift_surface(image_color, image_depth, image_depth2, left_color, right_color, S);
     SDL_FillRect(stereo_color, NULL, 0x000000);
-    SDL_BlitSurface (image_depth, NULL, stereo_color, NULL);
+    SDL_BlitSurface (left_color, NULL, stereo_color, NULL);
 
     SDL_Rect dest;
     dest.x = left_color->w;
     dest.y = 0;
     dest.w = right_color->w;
     dest.h = right_color->h;
-    SDL_BlitSurface (image_depth2, NULL, stereo_color, &dest);
+    SDL_BlitSurface (right_color, NULL, stereo_color, &dest);
 
+    //Compose original and depth
+    SDL_BlitSurface (stereo_color, NULL, image_all, NULL);
+    dest.x = 0;
+    dest.y = stereo_color->h;
+    SDL_BlitSurface (image_color, NULL, image_all, &dest);
+    dest.x = image_color->w;
+    SDL_BlitSurface (image_depth2, NULL, image_all, &dest);
 
     glTexImage2D( GL_TEXTURE_2D,
                   0, Mode,
@@ -379,9 +402,15 @@ int main(int argc, char* argv[])
           else if(event.key.keysym.sym == '-')
             S--;
           else if(event.key.keysym.sym == 'h')
+          {
             hole_filling = !hole_filling;
+            printf ("Hole filling: %d.\n", depth_filter);
+          }
           else if(event.key.keysym.sym == 'f')
+          {
             depth_filter = !depth_filter;     // filter toggle FCI****
+            printf ("Depth filter: %d.\n", depth_filter);
+          }
           else if(event.key.keysym.sym == SDLK_SPACE)
           {
             paused = !paused;
@@ -397,11 +426,11 @@ int main(int argc, char* argv[])
     var::frame_current_time = SDL_GetTicks();
 
     /****** Frame Rate Handle ******/
-    /*if((var::frame_current_time - var::frame_start_time) < (1000/60))
+    if((var::frame_current_time - var::frame_start_time) < (1000/60))
     {
       var::frame_count = 0;
       SDL_Delay((1000/60) - (var::frame_current_time - var::frame_start_time));
-    }*/
+    }
   }
   /*
    * Stop stream and clean up libVLC
@@ -518,6 +547,14 @@ void get_RGB( int Y, int U, int V, Uint8 &r, Uint8 &g, Uint8 &b)
 
 
 
+SDL_Surface *adaptive_filter_Park_et_al( SDL_Surface* image_depth,
+                                         SDL_Surface* image_depth2 )
+{
+  SDL_BlitSurface(image_depth, NULL, image_depth2, NULL);
+  int max_t1 = 2, max_t2 = 2;
+  // The first smoothing filter
+  
+}
 
 SDL_Surface* filter_depth( SDL_Surface* image_depth,
                            SDL_Surface* image_depth2,
@@ -534,79 +571,72 @@ SDL_Surface* filter_depth( SDL_Surface* image_depth,
   Uint8 r_new, g_new, b_new;
   float r_sum, g_sum, b_sum;
   // int Ybefore, Yafter, U, V; // test if Y changes with filter FCI
-
-
    // not processing the edges
-   for (int y = 0 + 2; y < rows - 2; y++)
-     {
-           for (int x = 0 + 2; x < cols - 2; x++)
-       {  
-        /* test of Y before and after FCI
-           Uint32 pixelt = getpixel(image_depth, x, y);
-           SDL_GetRGB (pixelt, image_depth->format, &r, &g, &b);
-           get_YUV(r, g, b, Ybefore, U, V);
-        */
-         r_sum = 0;
-         g_sum = 0;
-         b_sum = 0;
-          for (int filterX = 0; filterX < gauss_kernel_size; filterX++)
-	     for (int filterY = 0; filterY < gauss_kernel_size; filterY++)
-		{
-                // get original depth around point being calculated
-                neighborX = x - 1 + filterX;
-                neighborY = y - 1 + filterY;
+  // not processing the edges
+  for (int y = gauss_kernel_size - 1 ; y < rows - gauss_kernel_size - 1; y++)
+  {
+    for (int x = gauss_kernel_size - 1 ; x < cols - gauss_kernel_size - 1; x++)
+    {  
+     /* test of Y before and after FCI
+        Uint32 pixelt = getpixel(image_depth, x, y);
+        SDL_GetRGB (pixelt, image_depth->format, &r, &g, &b);
+        get_YUV(r, g, b, Ybefore, U, V);
+      */
+      r_sum = 0;
+      g_sum = 0;
+      b_sum = 0;
 
-                // load neighbor
-                Uint32 pixel = getpixel(image_depth, neighborX, neighborY);
-                SDL_GetRGB (pixel, image_depth->format, &r, &g, &b);
+      for (int filterX = 0; filterX < gauss_kernel_size; filterX++)
+      {
+        for (int filterY = 0; filterY < gauss_kernel_size; filterY++)
+        {
+          // get original depth around point being calculated
+          neighborX = x - 1 + filterX;
+          neighborY = y - 1 + filterY;
 
-                // multiply by kernel
-                // will type casting work properly? FCI
-                r_sum += r * gauss_kernel[filterX][filterY];
-                g_sum += g * gauss_kernel[filterX][filterY];
-                b_sum += b * gauss_kernel[filterX][filterY];
+          // load neighbor
+          Uint32 pixel = getpixel(image_depth, neighborX, neighborY);
+          SDL_GetRGB (pixel, image_depth->format, &r, &g, &b);
 
-                
-                // OK to apply Guassian filter to RGB values instead of Y value of YUV?  FCI
-                //testing Ybefore and Yafter suggests its ok
-              } 
+          // multiply by kernel
+          // will type casting work properly? FCI
+          r_sum += r * gauss_kernel[filterX][filterY];
+          g_sum += g * gauss_kernel[filterX][filterY];
+          b_sum += b * gauss_kernel[filterX][filterY];
+          // OK to apply Guassian filter to RGB values instead of Y value of YUV?
+          //testing Ybefore and Yafter suggests its ok
+        } 
               
-              // r_new = (Uint8) r_sum; g_new = (Uint8) g_sum; b_new = (Uint8) b_sum;
-              //chk valid range for result for result 
-              r_new = std::min(std::max(int( r_sum ), 0), 255); // not using bias or factor
-              g_new = std::min(std::max(int( g_sum ), 0), 255);
-              b_new = std::min(std::max(int( b_sum ), 0), 255);
-
-
-                /* test Y before and after FCI
-                r = r_new; g = g_new; b = b_new;
-                get_YUV(r, g, b, Yafter, U, V);
-                if (abs (Ybefore - Yafter) < 2) {
-                r_new = (Uint8) 0;
-                g_new = (Uint8) 0;
-                b_new = (Uint8) 0;
-                } else {
-                r_new = (Uint8) 255;
-                g_new = (Uint8) 255;
-                b_new = (Uint8) 255;
-                };
-
-                */
-              
-               
-          // store result in original position in image_depth2
-
-          Uint32 pixel_new = SDL_MapRGB(image_depth2->format, r_new, g_new, b_new);
-          putpixel (image_depth2, x, y, pixel_new );
-
-
-
+        // r_new = (Uint8) r_sum; g_new = (Uint8) g_sum; b_new = (Uint8) b_sum;
+        //chk valid range for result for result 
+        r_new = std::min(std::max(int( r_sum ), 0), 255); // not using bias or factor
+        g_new = std::min(std::max(int( g_sum ), 0), 255);
+        b_new = std::min(std::max(int( b_sum ), 0), 255);
+        /* test Y before and after FCI
+           r = r_new; g = g_new; b = b_new;
+           get_YUV(r, g, b, Yafter, U, V);
+           if (abs (Ybefore - Yafter) < 2)
+           {
+             r_new = (Uint8) 0;
+             g_new = (Uint8) 0;
+             b_new = (Uint8) 0;
+           }
+           else
+           {
+             r_new = (Uint8) 255;
+             g_new = (Uint8) 255;
+             b_new = (Uint8) 255;
+           };
+         */
+         
+        // store result in original position in image_depth2
+        Uint32 pixel_new = SDL_MapRGB(image_depth2->format, r_new, g_new, b_new);
+        putpixel (image_depth2, x, y, pixel_new );
+      }
     }
   }
   return image_depth2;
 }
-
-
 
 /* DIBR STARTS HERE */
 int find_shiftMC3(int depth, int Ny)
