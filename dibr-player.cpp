@@ -24,27 +24,68 @@ bool paused = true;
 
 bool depth_filter = true; 
 #define gauss_kernel_size 9
-double sigmax = 10.0, sigmay = 90;  // assymetric gaussian filter
+double sigmax = 500.0, sigmay = 10;  // assymetric gaussian filter
 double gauss_kernel [gauss_kernel_size][gauss_kernel_size];
+
+double gaussian (double x, double mu, double sigma)
+{
+  return exp ( -(((x-mu)/(sigma))*((x-mu)/(sigma)))/2.0 );
+}
+
+double oriented_gaussian (int x, int y,
+                          double sigma1, double sigma2)
+{
+  return exp ( - ((x)*(x))/(2.0*sigma1) - ((y)*(y))/(2.0*sigma2));
+}
+/* vector < vector <double> > produce2dGaussianKernel ( int kernelRadius,
+                                                     double sigmaX,
+                                                     double sigmaY )
+{
+  // get kernel matrix
+  vector < vector <double> > kernel2d ( 2*kernelRadius + 1,
+                                        vector <double> (2*kernelRadius+1));
+  //fill values
+  double sum = 0;
+  for (int row = 0; row < kernel2d.size(); row++)
+    for (int col = 0; col <kernel2d[row].size(); col++)
+    {
+      kernel2d[row][col] = gaussian (row, kernelRadius, sigmaX) *
+                           gaussian (row, kernelRadius, sigmaY);
+
+      sum += kernel2d[row][col];
+    }
+
+  //normallize
+  for (int row = 0; row < kernel2d.size(0; row++)
+    for (int col = 0; colr < kernel2d[row].size(); col++)
+      kernel2d[row][col] /= sum;
+}*/
+
 void calculate_gauss_kernel()
 {
+  double sum = 0;
   for (int x = 0; x < gauss_kernel_size; x++)
   {
     for (int y = 0; y < gauss_kernel_size; y++)
     {
       int x1 = x - gauss_kernel_size/2;
       int y1 = y - gauss_kernel_size/2;
+      gauss_kernel[x][y] = oriented_gaussian(x1, y1, sigmax, sigmay);
       printf ("(%d, %d) ", x1, y1);
-      gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
-/*      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
-                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp ( -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 * pow (sigmay, 2))); */
+//      gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
+//      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
+//                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp ( -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 * pow (sigmay, 2)));
       printf ("%.5f ", gauss_kernel[x][y]);
+      sum += gauss_kernel[x][y]; 
     }
     printf ("\n");
   }
+
+  for (int x = 0; x < gauss_kernel_size; x++)
+    for (int y = 0; y < gauss_kernel_size; y++)
+      gauss_kernel[x][y] /= sum;
 }
 //FCI
-
 SDL_Event event;
 #define  RADDEG  57.29577951f
 
