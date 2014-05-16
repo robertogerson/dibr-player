@@ -50,38 +50,91 @@ long int timeval_subtract(struct timeval *result, struct timeval *t2, struct tim
     return (diff);
 }
 
-Mat image;
-Mat a;
+Mat image, input, output;
+
+#define N 256
+int depth_shift_table_lookup[N];
+
+/* DIBR STARTS HERE */
+int find_shiftMC3(int depth, int Ny)
+{
+  int h;
+  int nkfar = 128, nknear = 128, kfar = 0, knear = 0;
+  int n_depth = 256;  // Number of depth planes
+  int eye_sep = 6;    // eye separation 6cm
+
+  // This is a display dependant parameter and the maximum shift depends
+  // on this value. However, the maximum disparity should not exceed
+  // particular threshold, defined by phisiology of human vision.
+  int Npix = 100; // 300 TODO: Make this adjustable in the interface.
+  int h1 = 0;
+  int A = 0;
+  int h2 = 0;
+
+  // Viewing distance. Usually 300 cm
+  int D = 300;
+
+  // According to N8038
+  knear = nknear / 64;
+  kfar = nkfar / 16;
+
+  // Assumption 1: For visual purposes
+  // This can be let as it is. However, then we are not able to have a
+  // clear understanding of how the rendered views look like.
+  // knear = 0 means everything is displayed behind the screen
+  // which is practically not the case.
+  //
+  // Interested user can remove this part to see what happens.
+  knear = 0;
+  A  = depth*(knear + kfar)/(n_depth-1);
+  h1 = -eye_sep*Npix*( A - kfar )/D;
+  h2 = (h1/2) % 1; //  Warning: Previously this was rem(h1/2,1)
+
+  if (h2>=0.5)
+    h = ceil(h1/2);
+  else
+    h = floor(h1/2);
+  if (h<0)
+    // It will never come here due to Assumption 1
+    h = 0 - h;
+  return h;
+}
 
 int main(int argc,char *argv[])
 {
-    string a1 (argv[1]);
-    string a2 (argv[2]);
-    if(argc <2 )
+    // Remove from here
+    for(int i = 0; i < N; i++)
     {
-        cerr << "USAGE : program {path}  {video file name}";
+      depth_shift_table_lookup[i] = find_shiftMC3(i, N);
+      printf ("%d ", depth_shift_table_lookup[i]);
     }
 
-    string source = a1;
-           source += "/";
-           source += a2;
+    string source (argv[1]);
+    if(argc < 1 )
+    {
+        cerr << "USAGE : program {image_path}";
+    }
 
-    VideoCapture inputVideo(source);              // Open input
+/*    VideoCapture inputVideo(source);              // Open input
     inputVideo.set(CV_CAP_PROP_FPS, 10);
     if (!inputVideo.isOpened())
     {
         cout  << "Could not open the input video: " << source << endl;
         return -1;
     }
-
-    a.create(1080, 1920, CV_8UC(3));
-    inputVideo >> image;
-    resize(image, a, a.size(), 0, 0, INTER_NEAREST);
+    inputVideo >> image; */
+    image = imread(argv[1], CV_LOAD_IMAGE_COLOR);
+    input.create(1080, 1920, CV_8UC(3));
+    resize(image, input, input.size(), 0, 0, INTER_NEAREST);
 
     //creating OCLX object
-    OCLX o;
-    Mat output(a.rows, a.cols, a.type());
-    // Mat output1(image.rows, image.cols, image.type());
+    OCLX o;   
+    Mat color, depth;
+    color.create(input.rows, input.cols/2, CV_8UC(3));
+    depth.create(input.rows, input.cols/2, CV_8UC(3));
+
+    output.create(input.rows, input.cols/2, CV_8UC(3));
+    color.copyTo(output);
 
     //structures to hold kernel and program
     cl_kernel kernel[10];
@@ -89,7 +142,6 @@ int main(int argc,char *argv[])
 
     struct timeval end,result,now;
     long int diff;
-    Mat b;
 
     //initialising opencl structues
     o.init();
@@ -99,32 +151,60 @@ int main(int argc,char *argv[])
     for(;;)
     {
         gettimeofday(&now, NULL);
-        inputVideo >> image;
+        // inputVideo >> image;
+        gettimeofday(&end, NULL);
+        diff = timeval_subtract(&result, &end, &now);
+        cerr << "Decode\t" << (float)diff << " us" << endl;
 
-        resize(image, a, a.size(), 0, 0, INTER_NEAREST);
-        // a.copyTo(b);
-        imshow("image", a);
+        gettimeofday(&now, NULL);
+        resize(image, input, input.size(), 0, 0, INTER_NEAREST);
+        gettimeofday(&end, NULL);
+        diff = timeval_subtract(&result, &end, &now);
+        cerr << "Resize\t" << (float)diff << " us" << endl;
+
+        Mat cropped = input(Rect(0, 0, (input.cols / 2), input.rows));
+        cropped.copyTo(color);
+        cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
+        cropped.copyTo(depth);
+
+        output.setTo(cv::Scalar(255, 255, 255));
+
+        gettimeofday(&now, NULL);
+        imshow("image", color);
+        imshow("depth", depth);
+        gettimeofday(&end, NULL);
+        diff = timeval_subtract(&result, &end, &now);
+        cerr << "Show\t" << (float)diff << " us" << endl;
 
         //running parallel program
         gettimeofday(&now, NULL);
-        o.conv( a, output,
-                &kernel[0], program);
+        // o.conv( color, output, &kernel[0], program );
+        o.dibr ( color,
+                 depth,
+                 output,
+                 &kernel[0], program,
+                 &depth_shift_table_lookup[0] );
+
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
-        cerr << "Time to execute parallel algorithm " << (float)diff << "  us" << endl;
-        imshow("win1", output);
+        cerr << "DIBR\t" << (float)diff << "  us" << endl;
 
-        //running serial algorithm
+        gettimeofday(&end, NULL);
+        imshow("win1", output);
+        gettimeofday(&end, NULL);
+        diff = timeval_subtract(&result, &end, &now);
+        cerr << "Show\t" << (float)diff << " us" << endl;
+
+        // running serial algorithm
         /*gettimeofday(&now, NULL);
         cv::cvtColor(b, b, CV_BGR2HSV_FULL);
         cv::cvtColor(b, b, CV_HSV2BGR_FULL);
         cv::cvtColor(b, b, CV_BGR2GRAY);
-
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
         cerr << "Time to execute serial " << (float)diff << "  us" << endl;
         imshow("win2", b); */
-        cv::waitKey(1);
+        cv::waitKey();
     }
 
     o.destroy();

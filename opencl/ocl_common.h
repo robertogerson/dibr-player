@@ -513,13 +513,13 @@ public:
 
         cl_mem_flags flags = CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR ;
         clImage = clCreateImage2D(context,
-                flags,
-                &clImageFormat,
-                width,
-                height,
-                0,
-                buffer,
-                &status);
+                                  flags,
+                                  &clImageFormat,
+                                  width,
+                                  height,
+                                  0,
+                                  buffer,
+                                  &status);
         checkErr(status,(char*)__FILE__,__LINE__);
 
         return clImage;
@@ -640,16 +640,18 @@ public:
         string source="./convolution.cl";
         string name[10];
         name[0] = "convolute";
+        name[1] = "dibr";
 
         read_program((char *)source.c_str(), program);
         read_kernel(*program, &kernel[0], (char *)name[0].c_str());
+        read_kernel(*program, &kernel[1], (char *)name[1].c_str());
     }
 
     //function to call the launch kernel on the device and set the arguments for kernel execution
     //commmon host memory pointer
     void *memory1;
     //common global memory pointer
-    cl_mem dimageIn, dimageOut, dimageFilter;
+    cl_mem dimageIn, dimageDepth, dimageOut, dShiftLookup, dimageFilter;
 
 #if 1
     int FILTER_SIZE = 5;
@@ -671,9 +673,10 @@ public:
 
     cl_int conv(Mat src, Mat out, cl_kernel *ke, cl_program program)
     {
-        cl_kernel kernel = ke[1];
+        cl_kernel kernel = ke[0];
         cl_int status;
         cl_event event[5];
+
         size_t bytes = src.rows * src.step * sizeof(unsigned char);
         size_t filter_bytes = FILTER_SIZE * FILTER_SIZE * sizeof(float);
 
@@ -699,7 +702,6 @@ public:
                               RoundUp(local[1], src.rows),
                               1 };
         int s = 0, channels = 0;
-        kernel = ke[0];
 
         int arg = -1;
         //setting the kernel arguments
@@ -727,6 +729,88 @@ public:
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageFilter);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
+        CHECK_OPENCL_ERROR(status, "");
+
+        //waiting for the kernel to complete
+        status = clWaitForEvents(1, &event[0]);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = read_buffer(dimageOut, bytes, out.data, event, 1);
+        CHECK_OPENCL_ERROR(status, "");
+    }
+
+    cl_int dibr( Mat src, Mat depth,
+                 Mat out,
+                 cl_kernel *ke, cl_program program,
+                 int *shift_table_lookup)
+    {
+        cl_kernel kernel = ke[1];
+        cl_int status;
+        cl_event event[10];
+        size_t bytes = src.rows * src.step * sizeof(unsigned char);
+        size_t shift_lookup_table_bytes = 256 * sizeof (int);
+
+        if(flag == 0)
+        {
+            dimageIn = create_rw_buffer(bytes, src.data, 0, NULL);
+            dimageDepth = create_rw_buffer(bytes, depth.data, 0, NULL);
+            dimageOut = create_rw_buffer(bytes, out.data, 0, NULL);
+
+            dShiftLookup = create_rw_buffer(256 * sizeof (int), shift_table_lookup, 0, NULL);
+            // For now, I only need to write this buffer one time. This will change only when the
+            // camera change its position
+            status = write_buffer(dShiftLookup, shift_lookup_table_bytes, shift_table_lookup, event, 5);
+            CHECK_OPENCL_ERROR(status, "");
+
+            flag = 1;
+        }
+        else
+        {
+            status = write_buffer(dimageIn, bytes, src.data, event, 5);
+            CHECK_OPENCL_ERROR(status, "");
+
+            status = write_buffer(dimageDepth, bytes, depth.data, event, 6);
+            CHECK_OPENCL_ERROR(status, "");
+        }
+
+        size_t local[3] = { 1, 1, 1 };
+        size_t global[3] =  { src.cols,
+                              src.rows,
+                              1 };
+        int s = 0, channels = 0, S = 20;
+
+        int arg = -1;
+        //setting the kernel arguments
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageIn);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepth);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageOut);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.rows);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.cols);
+        CHECK_OPENCL_ERROR(status, "");
+
+        s = src.step;
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
+        CHECK_OPENCL_ERROR(status, "");
+
+        channels = (int)src.channels();
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &channels);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dShiftLookup);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &S);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
