@@ -23,6 +23,22 @@
     return FAILURE; \
     }
 
+#if 1
+    int FILTER_SIZE = 5;
+    int FILTER_HALF_SIZE = 2;
+    float filter[25] = { 0.0396454720, 0.0399106581, 0.0399994471, 0.0399106581, 0.0396454720,
+                         0.0399106581, 0.0401776181, 0.0402670009, 0.0401776181, 0.0399106581,
+                         0.0399994471, 0.0402670009, 0.0403565827, 0.0402670009, 0.0399994471,
+                         0.0399106581, 0.0401776181, 0.0402670009, 0.0401776181, 0.0399106581,
+                         0.0396454720, 0.0399106581, 0.0399994471, 0.0399106581, 0.0396454720 };
+#else
+    int FILTER_SIZE = 3;
+    int FILTER_HALF_SIZE = 1;
+    float filter[25] = {-1.0, 0.0, +1.0,
+                        -2.0, 0.0, +2.0,
+                        -1.0, 0.0, -1.0};
+#endif
+
 /**
  * function to display opencv Error based on the error code
  */
@@ -653,22 +669,6 @@ public:
     //common global memory pointer
     cl_mem dimageIn, dimageDepth, dimageOut, dShiftLookup, dimageFilter;
 
-#if 1
-    int FILTER_SIZE = 5;
-    int FILTER_HALF_SIZE = 2;
-    float filter[25] = { 0.0396454720, 0.0399106581, 0.0399994471, 0.0399106581, 0.0396454720,
-                         0.0399106581, 0.0401776181, 0.0402670009, 0.0401776181, 0.0399106581,
-                         0.0399994471, 0.0402670009, 0.0403565827, 0.0402670009, 0.0399994471,
-                         0.0399106581, 0.0401776181, 0.0402670009, 0.0401776181, 0.0399106581,
-                         0.0396454720, 0.0399106581, 0.0399994471, 0.0399106581, 0.0396454720 };
-#else
-    int FILTER_SIZE = 3;
-    int FILTER_HALF_SIZE = 1;
-    float filter[25] = {-1.0, 0.0, +1.0,
-                        -2.0, 0.0, +2.0,
-                        -1.0, 0.0, -1.0};
-#endif
-
     int flag; //initialization flag for code to be run during first execution
 
     cl_int conv(Mat src, Mat out, cl_kernel *ke, cl_program program)
@@ -737,9 +737,11 @@ public:
         //waiting for the kernel to complete
         status = clWaitForEvents(1, &event[0]);
         CHECK_OPENCL_ERROR(status, "");
+        clFinish(queue);
 
         status = read_buffer(dimageOut, bytes, out.data, event, 1);
         CHECK_OPENCL_ERROR(status, "");
+        clFinish(queue);
     }
 
     cl_int dibr( Mat src, Mat depth,
@@ -776,7 +778,7 @@ public:
             CHECK_OPENCL_ERROR(status, "");
         }
 
-        size_t local[3] = { 1, 1, 1 };
+        size_t local[3] = { 16, 9, 1 };
         size_t global[3] =  { src.cols,
                               src.rows,
                               1 };
@@ -817,11 +819,16 @@ public:
         CHECK_OPENCL_ERROR(status, "");
 
         //waiting for the kernel to complete
-        status = clWaitForEvents(1, &event[0]);
+        /* status = clWaitForEvents(1, &event[0]);
         CHECK_OPENCL_ERROR(status, "");
+        clFinish(queue); */
 
         status = read_buffer(dimageOut, bytes, out.data, event, 1);
         CHECK_OPENCL_ERROR(status, "");
+
+        status = clWaitForEvents (1, &event[1]);
+        // CHECK_OPENCL_ERROR(status, "");
+        // clFinish(queue);
     }
 };
 
