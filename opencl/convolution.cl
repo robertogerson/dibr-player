@@ -42,7 +42,7 @@ __kernel void dibr (
        __constant DATA_TYPE  *depth,
        __global DATA_TYPE *out,
        int rows, int cols,
-       int src_step, int channel,
+       int src_step, int out_step, int channel,
        __constant int *depth_shift_table_lookup,
        int S)
 {
@@ -61,17 +61,27 @@ __kernel void dibr (
         /* out [idx] = D;
         out [idx+1] = 0;
         out [idx+2] = 0; */
+
+        b = src [idx];
+        g = src [idx+1];
+        r = src [idx+2];
         S = 20;
         if( x + S - shift < cols)
         {
-            b = src [idx];
-            g = src [idx+1];
-            r = src [idx+2];
-            int newidx = (y  * src_step) + (x + S - shift) * channel;
+            int newidx = (y  * out_step) + (x + S - shift) * channel;
             out [newidx] = b;
             out [newidx+1] = g;
             out [newidx+2] = r;
             // putpixel (right_image, x + shift - S, y, getpixel (image_color, x, y) );
+            // mask [y][x+shift-S] = 1;
+        }
+
+        if( x + cols + shift - S >= 0 )
+        {
+            int newidx = (y  * out_step) + (x + cols + shift - S) * channel;
+            out [newidx] = b;
+            out [newidx+1] = g;
+            out [newidx+2] = r;
             // mask [y][x+shift-S] = 1;
         }
 }
@@ -96,7 +106,7 @@ __kernel void convolute (
         float sumG = 0.0;
         float sumB = 0.0;
 
-#if 0
+#if 1
         if ( (x - FILTER_HALF_SIZE) < 0 || (y - FILTER_HALF_SIZE < 0 ))
         {
             out[idx] = src[idx];

@@ -54,14 +54,14 @@ Mat image, input, output;
 
 #define N 256
 int depth_shift_table_lookup[N];
+int eye_sep = 6;
 
 /* DIBR STARTS HERE */
-int find_shiftMC3(int depth, int Ny)
+int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
 {
   int h;
   int nkfar = 128, nknear = 128, kfar = 0, knear = 0;
   int n_depth = 256;  // Number of depth planes
-  int eye_sep = 6;    // eye separation 6cm
 
   // This is a display dependant parameter and the maximum shift depends
   // on this value. However, the maximum disparity should not exceed
@@ -115,15 +115,15 @@ int main(int argc,char *argv[])
         cerr << "USAGE : program {image_path}";
     }
 
-/*    VideoCapture inputVideo(source);              // Open input
+    VideoCapture inputVideo(source);              // Open input
     inputVideo.set(CV_CAP_PROP_FPS, 10);
     if (!inputVideo.isOpened())
     {
         cout  << "Could not open the input video: " << source << endl;
         return -1;
     }
-    inputVideo >> image; */
-    image = imread(argv[1], CV_LOAD_IMAGE_COLOR);
+    inputVideo >> image;
+    // image = imread(argv[1], CV_LOAD_IMAGE_COLOR);
     input.create(1080, 1920, CV_8UC(3));
     resize(image, input, input.size(), 0, 0, INTER_NEAREST);
 
@@ -133,8 +133,8 @@ int main(int argc,char *argv[])
     color.create(input.rows, input.cols/2, CV_8UC(3));
     depth.create(input.rows, input.cols/2, CV_8UC(3));
 
-    output.create(input.rows, input.cols/2, CV_8UC(3));
-    color.copyTo(output);
+    output.create(input.rows, input.cols, CV_8UC(3));
+    // color.copyTo(output);
 
     //structures to hold kernel and program
     cl_kernel kernel[10];
@@ -151,7 +151,7 @@ int main(int argc,char *argv[])
     for(;;)
     {
         gettimeofday(&now, NULL);
-        // inputVideo >> image;
+        inputVideo >> image;
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
         cerr << "Decode\t" << (float)diff << " us" << endl;
@@ -166,12 +166,18 @@ int main(int argc,char *argv[])
         cropped.copyTo(color);
         cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
         cropped.copyTo(depth);
-
-        output.setTo(cv::Scalar(255, 255, 255));
+        imshow("depth1", cropped);
 
         gettimeofday(&now, NULL);
+        GaussianBlur(cropped, depth, Size (31, 31), 10, 100);
+        gettimeofday(&end, NULL);
+        diff = timeval_subtract(&result, &end, &now);
+        cerr << "Filter\t" << (float)diff << " us" << endl;
+
+        output.setTo(cv::Scalar(255, 255, 255));
+        gettimeofday(&now, NULL);
         imshow("image", color);
-        imshow("depth", depth);
+        imshow("depth2", depth);
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
         cerr << "Show\t" << (float)diff << " us" << endl;
@@ -184,19 +190,21 @@ int main(int argc,char *argv[])
                  output,
                  &kernel[0], program,
                  &depth_shift_table_lookup[0] );
-
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
         cerr << "DIBR\t" << (float)diff << "  us" << endl;
 
-        gettimeofday(&end, NULL);
-        imshow("win1", output);
+        gettimeofday(&now, NULL);
+        /* cvNamedWindow("Name", CV_WINDOW_NORMAL);
+        cvSetWindowProperty("Name", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN); */
+        imshow("Name", output);
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
         cerr << "Show\t" << (float)diff << " us" << endl;
 
         // running serial algorithm
-        /*gettimeofday(&now, NULL);
+        /*
+        gettimeofday(&now, NULL);
         cv::cvtColor(b, b, CV_BGR2HSV_FULL);
         cv::cvtColor(b, b, CV_HSV2BGR_FULL);
         cv::cvtColor(b, b, CV_BGR2GRAY);
@@ -204,7 +212,28 @@ int main(int argc,char *argv[])
         diff = timeval_subtract(&result, &end, &now);
         cerr << "Time to execute serial " << (float)diff << "  us" << endl;
         imshow("win2", b); */
-        cv::waitKey();
+        int key = cvWaitKey(1);
+
+        if (key == 1113937) // LEFT_KEY
+        {
+            eye_sep -= 1;
+            // Remove from here
+            for(int i = 0; i < N; i++)
+            {
+              depth_shift_table_lookup[i] = find_shiftMC3(i, N, eye_sep);
+              printf ("%d ", depth_shift_table_lookup[i]);
+            }
+        }
+        else if (key == 1113939) //RIGHT_KEY
+        {
+            eye_sep += 1;
+            // Remove from here
+            for(int i = 0; i < N; i++)
+            {
+              depth_shift_table_lookup[i] = find_shiftMC3(i, N, eye_sep);
+              printf ("%d ", depth_shift_table_lookup[i]);
+            }
+        }
     }
 
     o.destroy();

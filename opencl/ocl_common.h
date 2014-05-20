@@ -23,7 +23,7 @@
     return FAILURE; \
     }
 
-#if 1
+#if 0
     int FILTER_SIZE = 5;
     int FILTER_HALF_SIZE = 2;
     float filter[25] = { 0.0396454720, 0.0399106581, 0.0399994471, 0.0399106581, 0.0396454720,
@@ -753,13 +753,14 @@ public:
         cl_int status;
         cl_event event[10];
         size_t bytes = src.rows * src.step * sizeof(unsigned char);
+        size_t out_bytes = out.rows * out.step * sizeof(unsigned char);
         size_t shift_lookup_table_bytes = 256 * sizeof (int);
 
         if(flag == 0)
         {
             dimageIn = create_rw_buffer(bytes, src.data, 0, NULL);
             dimageDepth = create_rw_buffer(bytes, depth.data, 0, NULL);
-            dimageOut = create_rw_buffer(bytes, out.data, 0, NULL);
+            dimageOut = create_rw_buffer(out_bytes, out.data, 0, NULL);
 
             dShiftLookup = create_rw_buffer(256 * sizeof (int), shift_table_lookup, 0, NULL);
             // For now, I only need to write this buffer one time. This will change only when the
@@ -771,10 +772,13 @@ public:
         }
         else
         {
-            status = write_buffer(dimageIn, bytes, src.data, event, 5);
+            status = write_buffer(dimageIn, bytes, src.data, event, 4);
             CHECK_OPENCL_ERROR(status, "");
 
-            status = write_buffer(dimageDepth, bytes, depth.data, event, 6);
+            status = write_buffer(dimageDepth, bytes, depth.data, event, 5);
+            CHECK_OPENCL_ERROR(status, "");
+
+            status = write_buffer(dimageOut, out_bytes, out.data, event, 6);
             CHECK_OPENCL_ERROR(status, "");
         }
 
@@ -805,6 +809,10 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
         CHECK_OPENCL_ERROR(status, "");
 
+        s = out.step;
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
+        CHECK_OPENCL_ERROR(status, "");
+
         channels = (int)src.channels();
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &channels);
         CHECK_OPENCL_ERROR(status, "");
@@ -823,12 +831,12 @@ public:
         CHECK_OPENCL_ERROR(status, "");
         clFinish(queue); */
 
-        status = read_buffer(dimageOut, bytes, out.data, event, 1);
+        clFinish(queue);
+        status = read_buffer(dimageOut, out_bytes, out.data, event, 1);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clWaitForEvents (1, &event[1]);
-        // CHECK_OPENCL_ERROR(status, "");
-        // clFinish(queue);
+        CHECK_OPENCL_ERROR(status, "");
     }
 };
 
