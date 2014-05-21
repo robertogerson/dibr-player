@@ -41,8 +41,10 @@ __kernel void dibr (
        __constant DATA_TYPE *src,
        __constant DATA_TYPE  *depth,
        __global DATA_TYPE *out,
+       __global DATA_TYPE *mask,
        int rows, int cols,
        int src_step, int out_step, int channel,
+       int mask_step,
        __constant int *depth_shift_table_lookup,
        int S)
 {
@@ -58,32 +60,105 @@ __kernel void dibr (
         float D = rgb2Y(r, g, b);
         int shift = depth_shift_table_lookup [ (int)D];
 
-        /* out [idx] = D;
-        out [idx+1] = 0;
-        out [idx+2] = 0; */
-
         b = src [idx];
         g = src [idx+1];
         r = src [idx+2];
         S = 20;
-        if( x + S - shift < cols)
+
+        if(1)
         {
-            int newidx = (y  * out_step) + (x + S - shift) * channel;
+            if( x + S - shift < cols)
+            {
+                int newidx = (y  * out_step) + (x + S - shift) * channel;
+                out [newidx] = b;
+                out [newidx+1] = g;
+                out [newidx+2] = r;
+
+                newidx =  y * mask_step + (x + S - shift);
+                mask [newidx] = '1';
+            }
+
+            if( x + cols + shift - S >= 0 )
+            {
+                int newidx = (y  * out_step) + (x + cols + shift - S) * channel;
+                out [newidx] = b;
+                out [newidx+1] = g;
+                out [newidx+2] = r;
+
+                newidx =  y * mask_step + (x + shift - S) + cols;
+                mask [newidx] = '1';
+            }
+        }
+        else
+        {
+            shift *= 2;
+            if( x + S - shift < cols)
+            {
+                int newidx = (y  * out_step) + (x + S - shift) * channel;
+                out [newidx] = b;
+                out [newidx+1] = g;
+                out [newidx+2] = r;
+
+                newidx =  y * mask_step + (x + S - shift);
+                mask [newidx] = '1';
+            }
+
+            int newidx = (y * out_step) + (x + cols )* channel;
             out [newidx] = b;
             out [newidx+1] = g;
             out [newidx+2] = r;
-            // putpixel (right_image, x + shift - S, y, getpixel (image_color, x, y) );
-            // mask [y][x+shift-S] = 1;
+
+            newidx =  y * mask_step + x;
+            mask [newidx] = '1';
         }
 
-        if( x + cols + shift - S >= 0 )
+}
+
+__kernel void hole_filling (
+        __global DATA_TYPE *src,
+        __global DATA_TYPE *out,
+       __global DATA_TYPE *mask,
+        int rows, int cols,
+        int src_step, int out_step, int channel, int mask_step,
+        int INTERPOLATION_HALF_SIZE_WINDOW)
+{
+    const int x = get_global_id(0);
+    const int y = get_global_id(1);
+
+
+    int idxMask = y * mask_step + x;
+    if(mask[idxMask] != '1') // is hole
+    {
+        float sumB = 0, sumG = 0, sumR = 0, Y = 0;
+        float total = 0;
+        for (int i = -INTERPOLATION_HALF_SIZE_WINDOW; i <= INTERPOLATION_HALF_SIZE_WINDOW; i++)
         {
-            int newidx = (y  * out_step) + (x + cols + shift - S) * channel;
-            out [newidx] = b;
-            out [newidx+1] = g;
-            out [newidx+2] = r;
-            // mask [y][x+shift-S] = 1;
+            if (x + i >= 0 && x + i < 2 * rows)
+            {
+                int idxOut1 = y * out_step + (x + i) * channel;
+                int idxMask1 = y * mask_step + x + i;
+
+                if(mask[idxMask1] == '1') // non-hole
+                {
+                    DATA_TYPE r, g, b;
+                    b = out [idxOut1];
+                    g = out [idxOut1 + 1];
+                    r = out [idxOut1 + 2];
+
+                    sumB += (int) b;
+                    sumG += (int) g;
+                    sumR += (int) r;
+
+                    total += 1.0;
+                }
+            }
         }
+
+        int idxOut = y * out_step + x * channel;
+        out[idxOut] = (DATA_TYPE)(sumB/total);
+        out[idxOut+1] = (DATA_TYPE)(sumG/total);
+        out[idxOut+2] = (DATA_TYPE)(sumR/total);
+    }
 }
 
 __kernel void convolute (

@@ -54,7 +54,7 @@ Mat image, input, output;
 
 #define N 256
 int depth_shift_table_lookup[N];
-int eye_sep = 6;
+int eye_sep = 100;
 
 /* DIBR STARTS HERE */
 int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
@@ -129,9 +129,11 @@ int main(int argc,char *argv[])
 
     //creating OCLX object
     OCLX o;   
-    Mat color, depth;
+    Mat color, depth, depth_filtered, isHole;
     color.create(input.rows, input.cols/2, CV_8UC(3));
     depth.create(input.rows, input.cols/2, CV_8UC(3));
+    depth_filtered.create(input.rows, input.cols/2, CV_8UC(3));
+    isHole.create(input.rows, input.cols, CV_8UC1);
 
     output.create(input.rows, input.cols, CV_8UC(3));
     // color.copyTo(output);
@@ -168,13 +170,15 @@ int main(int argc,char *argv[])
         cropped.copyTo(depth);
         imshow("depth1", cropped);
 
-        gettimeofday(&now, NULL);
+        /*gettimeofday(&now, NULL);
         GaussianBlur(cropped, depth, Size (31, 31), 10, 100);
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
-        cerr << "Filter\t" << (float)diff << " us" << endl;
+        cerr << "Filter\t" << (float)diff << " us" << endl;*/
 
+        isHole.setTo(cv::Scalar(0));
         output.setTo(cv::Scalar(255, 255, 255));
+
         gettimeofday(&now, NULL);
         imshow("image", color);
         imshow("depth2", depth);
@@ -187,7 +191,9 @@ int main(int argc,char *argv[])
         // o.conv( color, output, &kernel[0], program );
         o.dibr ( color,
                  depth,
+                 depth_filtered,
                  output,
+                 isHole,
                  &kernel[0], program,
                  &depth_shift_table_lookup[0] );
         gettimeofday(&end, NULL);
@@ -195,16 +201,15 @@ int main(int argc,char *argv[])
         cerr << "DIBR\t" << (float)diff << "  us" << endl;
 
         gettimeofday(&now, NULL);
-        /* cvNamedWindow("Name", CV_WINDOW_NORMAL);
-        cvSetWindowProperty("Name", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN); */
+        cvNamedWindow("Name", CV_WINDOW_NORMAL);
+        cvSetWindowProperty("Name", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
         imshow("Name", output);
         gettimeofday(&end, NULL);
         diff = timeval_subtract(&result, &end, &now);
         cerr << "Show\t" << (float)diff << " us" << endl;
 
         // running serial algorithm
-        /*
-        gettimeofday(&now, NULL);
+        /* gettimeofday(&now, NULL);
         cv::cvtColor(b, b, CV_BGR2HSV_FULL);
         cv::cvtColor(b, b, CV_HSV2BGR_FULL);
         cv::cvtColor(b, b, CV_BGR2GRAY);
