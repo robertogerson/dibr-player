@@ -1,5 +1,9 @@
 #ifndef OCL_COMMON_H
 #define OCL_COMMON_H
+
+#include <stdio.h>
+#include <string.h>
+
 #define FAILURE -1
 #define SUCCESS 0
 #define MAX_SOURCE_SIZE (0x100000)
@@ -23,6 +27,13 @@
     return FAILURE; \
     }
 
+
+#if defined (__APPLE__) || defined(MACOSX)
+static const char* CL_GL_SHARING_EXT = "cl_APPLE_gl_sharing";
+#else
+static const char* CL_GL_SHARING_EXT = "cl_khr_gl_sharing";
+#endif
+
 #if 1
     int FILTER_SIZE = 5;
     int FILTER_HALF_SIZE = 2;
@@ -39,8 +50,34 @@
                         -1.0, 0.0, -1.0};
 #endif
 
+/* 
+ * Checks if an extension is suppported
+ */
+int IsExtensionSupported ( const char * support_str, const char * ext_string, size_t ext_buffer_size)
+{
+  size_t offset = 0;
+  const char* space_substr = strstr (ext_string + offset, " ");
+  size_t space_pos = space_substr ? space_substr - ext_string : 0;
+
+  while (space_pos < ext_buffer_size)
+  {
+    if (strncmp (support_str, ext_string + offset, space_pos) == 0)
+    {
+      // Device supports requested extension!
+      printf( "Info: Found extension support ‘%s’!\n", support_str);
+      return 1;
+    }
+    // Keep searching -- skip to next token string
+    offset = space_pos + 1;
+    space_substr = strstr (ext_string + offset, " ");
+    space_pos = space_substr ? space_substr - ext_string : 0;
+  }
+  printf ("Warning: Extension not supported ‘%s’!\n", support_str);
+  return 0;
+}
+
 /**
- * function to display opencv Error based on the error code
+ * function to display opencl Error based on the error code
  */
 template<typename T>
 const char* getOpenCLErrorCodeStr(T input)
@@ -373,7 +410,7 @@ public:
             cl_int maxComputUnits;
 
             size_t size;
-            status = clGetDeviceInfo(*devices[i],CL_DEVICE_NAME,0,NULL,&size);
+            status = clGetDeviceInfo(*devices[i], CL_DEVICE_NAME, 0, NULL, &size);
             status = clGetDeviceInfo(*devices[i], CL_DEVICE_NAME, sizeof(deviceName), deviceName, NULL);
             CHECK_OPENCL_ERROR(status, "clGetDeviceInfo CL_DEVICE_NAME failed");
 
@@ -387,14 +424,25 @@ public:
             //deviceIds.push_back(devices[i]);
             //devicename.push_back(deviceName);
             //deviceversion.push_back(device_version);;
-            clGetDeviceInfo(*devices[i], CL_DEVICE_MAX_COMPUTE_UNITS,sizeof(maxComputUnits), &maxComputUnits, NULL);
+            clGetDeviceInfo(*devices[i], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(maxComputUnits), &maxComputUnits, NULL);
 
             std::cout << "Device -->" << i << " : " << deviceName <<endl;
             std::cout << "Device Version -->" << device_version << std::endl;
             std::cout << "OpenCL version -->" << opencl_version << endl;
             std::cout << "max compute units -->" << maxComputUnits << endl;
 
+	    // Get string containing supported device extensions
+            size_t ext_size = 1024;
+            char* ext_string = (char*)malloc(ext_size);
+            status = clGetDeviceInfo (*devices[i], CL_DEVICE_EXTENSIONS, ext_size, ext_string, &ext_size);
 
+            // Search for GL support in extension string (space delimited)
+            int supported = IsExtensionSupported (CL_GL_SHARING_EXT, ext_string, ext_size);
+            if( supported )
+            {
+              // Device supports context sharing with OpenGL
+              std::cout <<  "Found GL Sharing Support!\n" << endl;
+            }
         }
 
         //free(devices);
@@ -670,7 +718,8 @@ public:
     void *memory1;
     //common global memory pointer
     cl_mem  dimageIn, dimageOut,
-            dimageDepth, dimageDepthFiltered,
+            dimageDepth, dimageDepthOut,
+            dimageDepthFiltered,
             dimageFilter,
             dShiftLookup,
             dimageMask;
@@ -752,7 +801,7 @@ public:
 
     cl_int dibr( Mat &src, Mat &depth,
                  Mat &filter_out,
-                 Mat &out,
+                 Mat &out, Mat &depth_out,
                  Mat &mask,
                  cl_kernel *ke, cl_program program,
                  int *shift_table_lookup)
@@ -770,7 +819,7 @@ public:
         // Begin filter
         if(flag == 0)
         {
-            dimageDepth = create_rw_buffer(bytes, src.data, 0, NULL);
+            dimageDepth = create_rw_buffer(bytes, depth.data, 0, NULL);
             dimageDepthFiltered = create_rw_buffer(bytes, filter_out.data, 0, NULL);
             dimageFilter = create_rw_buffer(filter_bytes, filter, 0, NULL);
 
@@ -779,6 +828,9 @@ public:
 
             dimageIn = create_rw_buffer(bytes, src.data, 0, NULL);
             dimageOut = create_rw_buffer(out_bytes, out.data, 0, NULL);
+            dimageDepthOut = create_rw_buffer(out_bytes, depth_out.data, 0, NULL);
+            status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
+            CHECK_OPENCL_ERROR(status, "");
 
             dShiftLookup = create_rw_buffer(256 * sizeof (int), shift_table_lookup, 0, NULL);
             // For now, I only need to write this buffer one time. This will change only when the
@@ -787,13 +839,15 @@ public:
             CHECK_OPENCL_ERROR(status, "");
 
             dimageMask = create_rw_buffer(mask_bytes, mask.data, 0, NULL);
-
             status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
             CHECK_OPENCL_ERROR(status, "");
             flag = 1;
         }
         else
         {
+            status = write_buffer(dShiftLookup, shift_lookup_table_bytes, shift_table_lookup, event, 5);
+            CHECK_OPENCL_ERROR(status, "");
+
             status = write_buffer(dimageDepth, bytes, depth.data, event, 5);
             CHECK_OPENCL_ERROR(status, "");
 
@@ -801,6 +855,9 @@ public:
             CHECK_OPENCL_ERROR(status, "");
 
             status = write_buffer(dimageOut, out_bytes, out.data, event, 6);
+            CHECK_OPENCL_ERROR(status, "");
+
+            status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
             CHECK_OPENCL_ERROR(status, "");
 
             status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
@@ -859,6 +916,9 @@ public:
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageOut);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageMask);
@@ -933,7 +993,7 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
         CHECK_OPENCL_ERROR(status, "");
 
-        int INTERPOLATION_HALF_SIZE_WINDOW = 2;
+        int INTERPOLATION_HALF_SIZE_WINDOW = 10;
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
         CHECK_OPENCL_ERROR(status, "");
 
@@ -941,7 +1001,8 @@ public:
         CHECK_OPENCL_ERROR(status, "");
         // End hole-filling
 
-        clFinish(queue);
+        clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
+
         //waiting for the kernel to complete
         /* status = clWaitForEvents(1, &event[0]);
         CHECK_OPENCL_ERROR(status, "");

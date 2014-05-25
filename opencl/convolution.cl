@@ -41,6 +41,7 @@ __kernel void dibr (
        __constant DATA_TYPE *src,
        __constant DATA_TYPE  *depth,
        __global DATA_TYPE *out,
+       __global DATA_TYPE  *depth_out,
        __global DATA_TYPE *mask,
        int rows, int cols,
        int src_step, int out_step, int channel,
@@ -63,54 +64,67 @@ __kernel void dibr (
         b = src [idx];
         g = src [idx+1];
         r = src [idx+2];
-        S = 20;
+        S = 5;
 
-        if(1)
-        {
-            if( x + S - shift < cols)
+#if 1
+            if( (x + S - shift) < cols && (x + S - shift) >= 0)
             {
-                int newidx = (y  * out_step) + (x + S - shift) * channel;
-                out [newidx] = b;
-                out [newidx+1] = g;
-                out [newidx+2] = r;
+                int newidx = (y  * out_step) + (x + S - shift) * channel;                
+                int newidx_mask =  y * mask_step + (x + S - shift);
 
-                newidx =  y * mask_step + (x + S - shift);
-                mask [newidx] = '1';
+                if(mask[newidx_mask] != '1' ||(int) D >= depth_out [newidx])
+                {
+                    out [newidx] = b;
+                    out [newidx+1] = g;
+                    out [newidx+2] = r;
+
+                    mask [newidx_mask] = '1';
+                    depth_out[newidx] = (int)D;
+                 }
             }
 
-            if( x + cols + shift - S >= 0 )
+            if( x + shift - S >= 0 && x + shift - S < cols )
             {
                 int newidx = (y  * out_step) + (x + cols + shift - S) * channel;
-                out [newidx] = b;
-                out [newidx+1] = g;
-                out [newidx+2] = r;
+                int newidx_mask =  y * mask_step + (x + shift - S) + cols;
 
-                newidx =  y * mask_step + (x + shift - S) + cols;
-                mask [newidx] = '1';
+                if(mask[newidx_mask] != '1' ||(int) D >= depth_out [newidx])
+                {
+                    out [newidx] = b;
+                    out [newidx+1] = g;
+                    out [newidx+2] = r;
+
+                    mask [newidx_mask] = '1';
+                    depth_out[newidx] = (int)D;
+                }
             }
-        }
-        else
-        {
-            shift *= 2;
+#else
+            //shift *= 2;
             if( x + S - shift < cols)
             {
+                int newidx_mask =  y * mask_step + (x + S - shift);
                 int newidx = (y  * out_step) + (x + S - shift) * channel;
-                out [newidx] = b;
-                out [newidx+1] = g;
-                out [newidx+2] = r;
 
-                newidx =  y * mask_step + (x + S - shift);
-                mask [newidx] = '1';
+                if(depth_out [newidx] <= D)
+                {
+                    out [newidx] = b;
+                    out [newidx + 1] = g;
+                    out [newidx + 2] = r;
+
+                    depth_out[newidx] = (int)D;
+                }
+
+                mask [newidx_mask] = '1';
             }
 
-            int newidx = (y * out_step) + (x + cols )* channel;
+            int newidx = (y * out_step) + (x + cols ) * channel;
             out [newidx] = b;
             out [newidx+1] = g;
             out [newidx+2] = r;
 
-            newidx =  y * mask_step + x;
+            newidx = y * mask_step + x + cols;
             mask [newidx] = '1';
-        }
+#endif
 
 }
 
