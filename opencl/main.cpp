@@ -52,6 +52,8 @@ using namespace std;
 //function to get the time difference
 long int timeval_subtract(struct timeval *result, struct timeval *t2, struct timeval *t1)
 {
+  (void) result;
+
   long int diff = (t2->tv_usec + 1000000 * t2->tv_sec) - (t1->tv_usec + 1000000 * t1->tv_sec);
   //result->tv_sec = diff / 1000000;
   //result->tv_usec = diff % 1000000;
@@ -67,6 +69,8 @@ int eye_sep = 100;
 /* DIBR STARTS HERE */
 int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
 {
+  (void) Ny;
+
   int h;
   int nkfar = 128, nknear = 128, kfar = 0, knear = 0;
   int n_depth = 256;  // Number of depth planes
@@ -114,15 +118,14 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
  * */
 void update_depth_shift_lookup_table ()
 {
-  // Remove from here
   for(int i = 0; i < N; i++)
   {
     depth_shift_table_lookup[i] = find_shiftMC3(i, N, eye_sep);
-    printf ("%d ", depth_shift_table_lookup[i]);
+    // printf ("%d ", depth_shift_table_lookup[i]);
   }
 }
 
-int is_video = 0;
+int is_input_video = 0;
 
 int main(int argc,char *argv[])
 {  
@@ -144,7 +147,7 @@ int main(int argc,char *argv[])
   magic_load(magic, NULL);
   magic_compile(magic, NULL);
   mime = magic_file(magic, opts['i'].c_str());
-  is_video = (strstr(mime, "image") == NULL);
+  is_input_video = (strstr(mime, "image") == NULL);
   magic_close(magic);
 
   input.create(1080, 1920, CV_8UC(3));
@@ -168,16 +171,19 @@ int main(int argc,char *argv[])
   struct timeval end,result,now;
   long int diff;
 
+  // Output Window
+  bool fullscreen = opts.count('f');
+  cvNamedWindow("Output", CV_WINDOW_NORMAL);
+
   //initialising opencl structures
   o.init();
-
   //loading the program and kernel source
   o.load_demo(&program, &kernel[0]);
   cout << "#\tDecode\tResize\tCrop\tFilter\tShow\tDIBR\tShow" << endl;
   for(;;)
   {
     gettimeofday(&now, NULL);
-    if(is_video)
+    if(is_input_video)
       inputVideo >> image;
     gettimeofday(&end, NULL);
     diff = timeval_subtract(&result, &end, &now);
@@ -197,7 +203,6 @@ int main(int argc,char *argv[])
     gettimeofday(&end, NULL);
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << "\t";
-    // imshow("depth1", cropped);
 
     gettimeofday(&now, NULL);
     GaussianBlur(cropped, depth, Size (31, 31), 10, 100);
@@ -227,15 +232,14 @@ int main(int argc,char *argv[])
              isHole,
              &kernel[0], program,
         &depth_shift_table_lookup[0] );
-
     gettimeofday(&end, NULL);
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << "\t";
 
     gettimeofday(&now, NULL);
-    cvNamedWindow("Name", CV_WINDOW_NORMAL);
-    cvSetWindowProperty("Name", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
-    imshow("Name", output);
+    if(fullscreen)
+      cvSetWindowProperty("Output", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
+    imshow("Output", output);
     gettimeofday(&end, NULL);
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << endl;

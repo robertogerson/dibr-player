@@ -369,6 +369,8 @@ public:
             std::cout<<"Error: No available platform found!"<<std::endl;
             return FAILURE;
         }
+
+        return SUCCESS;
     }
 
     //function to initialize the device information
@@ -448,7 +450,6 @@ public:
         //free(devices);
 
         return SUCCESS;
-
     }
 
     /**
@@ -457,7 +458,6 @@ public:
     cl_int init()
     {
         cl_int status;
-        unsigned int i;
         getPlatform(platform,1,false);
         getDevice(platform,num_devices,CL_DEVICE_TYPE_ALL,&devices);
 
@@ -472,6 +472,8 @@ public:
         // create queue for devices
         queue = clCreateCommandQueue(context,devices[0],0,&status);
         CHECK_OPENCL_ERROR(status, "clCreateCommandQueue failed");
+
+        return SUCCESS;
     }
 
 
@@ -559,6 +561,8 @@ public:
     //creates a global  read write memory which is mapped to a host memory and can be accessed by read/write to host pointer buffer1
     cl_mem create_rw_buffer(size_t bytes, void *buffer1, uint id, cl_event *event)
     {
+        (void) id;
+        (void) event;
         cl_int status;
 
         cl_mem_flags flags = CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR ;
@@ -572,6 +576,8 @@ public:
     //creates a global read write 2d image
     cl_mem create_rw_image(size_t bytes, void *buffer, cl_image_format clImageFormat, int width, int height)
     {
+        (void) bytes;
+
         cl_int status;
         cl_mem clImage;
 
@@ -596,7 +602,8 @@ public:
         if(id==0)
             clErr = clEnqueueWriteBuffer(queue,dbuffer,CL_FALSE,0,bytes,(void*)hbuffer,0,NULL,&event[id]);
         else
-            clErr = clEnqueueWriteBuffer(queue,dbuffer,CL_FALSE,0,bytes,(void*)hbuffer,NULL,NULL,&event[id]);
+            //clErr = clEnqueueWriteBuffer(queue,dbuffer,CL_FALSE,0,bytes,(void*)hbuffer,NULL,NULL,&event[id]);
+            clErr = clEnqueueWriteBuffer(queue,dbuffer,CL_FALSE,0,bytes,(void*)hbuffer,0,NULL,&event[id]);
         checkErr(clErr,__FILE__,__LINE__);
 
         return clErr;
@@ -614,7 +621,8 @@ public:
         if(id==0)
             clErr = clEnqueueReadBuffer(queue,dbuffer,CL_FALSE,0,bsize,(void*)hbuffer,0,NULL,NULL);
         else
-            clErr = clEnqueueReadBuffer(queue,dbuffer,CL_FALSE,0,bsize,(void*)hbuffer,NULL,NULL,&event[id]);
+            //clErr = clEnqueueReadBuffer(queue,dbuffer,CL_FALSE,0,bsize,(void*)hbuffer,NULL,NULL,&event[id]);
+            clErr = clEnqueueReadBuffer(queue,dbuffer,CL_FALSE,0,bsize,(void*)hbuffer,0,NULL,&event[id]);
         return clErr;
     }
 
@@ -675,6 +683,8 @@ public:
         status = clGetProgramBuildInfo(*program, devices[0], CL_PROGRAM_BUILD_LOG, lsize, build_log, NULL);
         CHECK_OPENCL_ERROR(status,"");
         printf("\nBuild Log:\n\n%s\n\n", build_log);
+
+        return SUCCESS;
     }
 
     //function to create kernel
@@ -684,6 +694,8 @@ public:
         cl_int status;
         *kernel = clCreateKernel(program,name, &status);
         CHECK_OPENCL_ERROR(status,"");
+
+        return SUCCESS;
     }
 
     //fuction to release kernel and program data structures
@@ -711,6 +723,8 @@ public:
         read_kernel(*program, &kernel[0], (char *)name[0].c_str());
         read_kernel(*program, &kernel[1], (char *)name[1].c_str());
         read_kernel(*program, &kernel[2], (char *)name[2].c_str());
+
+        return SUCCESS;
     }
 
     //function to call the launch kernel on the device and set the arguments for kernel execution
@@ -728,6 +742,8 @@ public:
 
     cl_int conv(Mat src, Mat out, cl_kernel *ke, cl_program program)
     {
+        (void) program;
+
         cl_kernel kernel = ke[0];
         cl_int status;
         cl_event event[5];
@@ -796,7 +812,10 @@ public:
 
         status = read_buffer(dimageOut, bytes, out.data, event, 1);
         CHECK_OPENCL_ERROR(status, "");
+
         clFinish(queue);
+
+        return SUCCESS;
     }
 
     cl_int dibr( Mat &src, Mat &depth,
@@ -806,6 +825,7 @@ public:
                  cl_kernel *ke, cl_program program,
                  int *shift_table_lookup)
     {
+        (void) program;
         cl_kernel kernel = ke[0];
         cl_int status;
         cl_event event[8];
@@ -865,8 +885,8 @@ public:
         }
 
         size_t local[3] = { 16, 9, 1 };
-        size_t global[3] =  { src.cols,
-                              src.rows,
+        size_t global[3] =  { (size_t) src.cols,
+                              (size_t) src.rows,
                               1 };
         int s = 0, channels = 0;
 
@@ -1013,6 +1033,8 @@ public:
 
         status = clWaitForEvents (1, &event[1]);
         CHECK_OPENCL_ERROR(status, "");
+
+        return SUCCESS;
     }
 };
 
