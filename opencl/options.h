@@ -8,12 +8,12 @@ static struct option long_options[] =
 {
   /* These options don't set a flag.
      We distinguish them by their indices. */
-  {"help",     no_argument,       0, 'h'},
-  {"fullscreen", no_argument,     0, 'f'},
-  {"opencl",  no_argument,        0, 'o'},
-  {"stereo",  no_argument,        0, 's'},
-  {"input",   required_argument,  0, 'i'},
-  {"resolution",   required_argument,   0, 'r'},
+  {"help",        no_argument,        0, 'h'},
+  {"fullscreen",  no_argument,        0, 'f'},
+  {"opencl",      no_argument,        0, 'o'},
+  {"stereo",      no_argument,        0, 's'},
+  {"input",       required_argument,  0, 'i'},
+  {"resolution",  required_argument,  0, 'r'},
   {0, 0, 0, 0}
 };
 
