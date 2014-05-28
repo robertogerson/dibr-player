@@ -27,7 +27,6 @@
 #include <CL/cl.h>
 
 //OpenCV header files
-#include <iostream>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -64,7 +63,7 @@ Mat image, input, output;
 
 #define N 256
 int depth_shift_table_lookup[N];
-int eye_sep = 100;
+int eye_sep = 6;
 
 /* DIBR STARTS HERE */
 int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
@@ -78,7 +77,7 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   // This is a display dependant parameter and the maximum shift depends
   // on this value. However, the maximum disparity should not exceed
   // particular threshold, defined by phisiology of human vision.
-  int Npix = 100; // 300 TODO: Make this adjustable in the interface.
+  int Npix = 1920/2; // 300 TODO: Make this adjustable in the interface.
   int h1 = 0;
   int A = 0;
   int h2 = 0;
@@ -99,16 +98,16 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   // Interested user can remove this part to see what happens.
   knear = 0;
   A  = depth*(knear + kfar)/(n_depth-1);
-  h1 = -eye_sep*Npix*( A - kfar )/D;
+  h1 = - eye_sep * Npix * ( A - kfar ) / D;
   h2 = (h1/2) % 1; //  Warning: Previously this was rem(h1/2,1)
 
-  if (h2>=0.5)
+  //if (h2>=0.5)
     h = ceil(h1/2);
-  else
+  /*else
     h = floor(h1/2);
   if (h<0)
     // It will never come here due to Assumption 1
-    h = 0 - h;
+    h = 0 - h;*/
   return h;
 }
 
@@ -121,14 +120,15 @@ void update_depth_shift_lookup_table ()
   for(int i = 0; i < N; i++)
   {
     depth_shift_table_lookup[i] = find_shiftMC3(i, N, eye_sep);
-    // printf ("%d ", depth_shift_table_lookup[i]);
+    printf ("%d ", depth_shift_table_lookup[i]);
   }
 }
 
 int is_input_video = 0;
 
 int main(int argc,char *argv[])
-{  
+{
+  int must_update = false;
   parse_opts(argc, argv); // First, parse the user options
 
   VideoCapture inputVideo(opts['i']);              // Open input
@@ -151,16 +151,18 @@ int main(int argc,char *argv[])
   magic_close(magic);
 
   input.create(1080, 1920, CV_8UC(3));
-  resize(image, input, input.size(), 0, 0, INTER_NEAREST);
+  resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
 
   // Creating image objects
   Mat color, depth, depth_filtered, depth_out, isHole;
   color.create(input.rows, input.cols/2, CV_8UC(3));
   depth.create(input.rows, input.cols/2, CV_8UC(3));
-  depth_out.create(input.rows, input.cols/2, CV_8UC(3));
+  depth_out.create(input.rows, input.cols, CV_8UC(3));
   depth_filtered.create(input.rows, input.cols/2, CV_8UC(3));
-  isHole.create(input.rows, input.cols, CV_8UC1);
+  isHole.create(input.rows, input.cols, CV_8UC1);  
   output.create(input.rows, input.cols, CV_8UC(3));
+
+  unsigned int *pixelMutex = (unsigned int*)malloc (input.rows * input.cols * sizeof (unsigned int));
 
   //creating OCLX object
   OCLX o;
@@ -179,83 +181,97 @@ int main(int argc,char *argv[])
   o.init();
   //loading the program and kernel source
   o.load_demo(&program, &kernel[0]);
-  cout << "#\tDecode\tResize\tCrop\tFilter\tShow\tDIBR\tShow" << endl;
+  cout << "#Decode\tResize\tCrop\tFilter\tDIBR\tShow" << endl;
   for(;;)
   {
-    gettimeofday(&now, NULL);
-    if(is_input_video)
-      inputVideo >> image;
-    gettimeofday(&end, NULL);
-    diff = timeval_subtract(&result, &end, &now);
-    cout << (float)diff << "\t";
+    if (must_update)
+    {
+      gettimeofday(&now, NULL);
+      if(is_input_video)
+        inputVideo >> image;
+      gettimeofday(&end, NULL);
+      diff = timeval_subtract(&result, &end, &now);
+      cout << (float)diff << "\t";
+
+      gettimeofday(&now, NULL);
+      resize(image, input, input.size(), 0, 0, INTER_NEAREST);
+      gettimeofday(&end, NULL);
+      diff = timeval_subtract(&result, &end, &now);
+      cout << (float)diff << "\t";
+
+      gettimeofday(&now, NULL);
+      Mat cropped = input(Rect(0, 0, (input.cols / 2), input.rows));
+      cropped.copyTo(color);
+      cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
+      imshow("depth", cropped);
+      cropped.copyTo(depth);
+      gettimeofday(&end, NULL);
+      diff = timeval_subtract(&result, &end, &now);
+      cout << (float)diff << "\t";
+
+      gettimeofday(&now, NULL);
+      /* bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED ); */
+      // GaussianBlur(cropped, depth, Size (101, 101), 10, 90);
+      gettimeofday(&end, NULL);
+      diff = timeval_subtract(&result, &end, &now);
+      cout << (float)diff << "\t";
+
+      memset(pixelMutex, 0, output.cols * output.rows * sizeof(unsigned int));
+      isHole.setTo(cv::Scalar(0));
+      depth_out.setTo(cv::Scalar(0, 0, 0));
+      output.setTo(cv::Scalar(255, 255, 255));
+
+      imshow("image", color);
+      imshow("depth2", depth);
+
+      //running parallel program
+      gettimeofday(&now, NULL);
+      // o.conv( color, output, &kernel[0], program );
+      o.dibr ( color,
+               depth,
+               depth_filtered,
+               output,
+               depth_out,
+               pixelMutex,
+               isHole,
+               &kernel[0], program,
+          &depth_shift_table_lookup[0] );
+      gettimeofday(&end, NULL);
+      diff = timeval_subtract(&result, &end, &now);
+      cout << (float)diff << "\t";
+
+      if(fullscreen)
+        cvSetWindowProperty("Output", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
+      imshow("Output", output);
+
+      must_update = false;
+    }
 
     gettimeofday(&now, NULL);
-    resize(image, input, input.size(), 0, 0, INTER_NEAREST);
-    gettimeofday(&end, NULL);
-    diff = timeval_subtract(&result, &end, &now);
-    cout << (float)diff << "\t";
-
-    gettimeofday(&now, NULL);
-    Mat cropped = input(Rect(0, 0, (input.cols / 2), input.rows));
-    cropped.copyTo(color);
-    cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
-    cropped.copyTo(depth);
-    gettimeofday(&end, NULL);
-    diff = timeval_subtract(&result, &end, &now);
-    cout << (float)diff << "\t";
-
-    gettimeofday(&now, NULL);
-    GaussianBlur(cropped, depth, Size (31, 31), 10, 100);
-    gettimeofday(&end, NULL);
-    diff = timeval_subtract(&result, &end, &now);
-    cout << (float)diff << "\t";
-
-    isHole.setTo(cv::Scalar(0));
-    depth_out.setTo(cv::Scalar(0, 0, 0));
-    output.setTo(cv::Scalar(255, 255, 255));
-
-    gettimeofday(&now, NULL);
-    imshow("image", color);
-    imshow("depth2", depth);
-    gettimeofday(&end, NULL);
-    diff = timeval_subtract(&result, &end, &now);
-    cout << (float)diff << "\t";
-
-    //running parallel program
-    gettimeofday(&now, NULL);
-    // o.conv( color, output, &kernel[0], program );
-    o.dibr ( color,
-             depth,
-             depth_filtered,
-             output,
-             depth_out,
-             isHole,
-             &kernel[0], program,
-        &depth_shift_table_lookup[0] );
-    gettimeofday(&end, NULL);
-    diff = timeval_subtract(&result, &end, &now);
-    cout << (float)diff << "\t";
-
-    gettimeofday(&now, NULL);
-    if(fullscreen)
-      cvSetWindowProperty("Output", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
-    imshow("Output", output);
+    int key = cvWaitKey(1);
     gettimeofday(&end, NULL);
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << endl;
 
-    int key = cvWaitKey(1);
-    if (key == 1113937) // LEFT_KEY
+    cout << "Key == " << key;
+    if (key == 27)
+      break;
+    else if (key == 'j') // LEFT_KEY
     {
-      eye_sep -= 10;
+      eye_sep -= 2;
       update_depth_shift_lookup_table();
+      must_update = true;
     }
-    else if (key == 1113939) //RIGHT_KEY
+    else if (key == 'l') //RIGHT_KEY
     {
-      eye_sep += 10;
+      eye_sep += 2;
       update_depth_shift_lookup_table();
+      must_update = true;
     }
+    else if (is_input_video)
+      must_update = true;
   }
 
+  delete pixelMutex;
   o.destroy();
 }

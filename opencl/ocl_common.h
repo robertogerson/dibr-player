@@ -733,6 +733,7 @@ public:
     //common global memory pointer
     cl_mem  dimageIn, dimageOut,
             dimageDepth, dimageDepthOut,
+            dimagePixelMutex,
             dimageDepthFiltered,
             dimageFilter,
             dShiftLookup,
@@ -818,9 +819,13 @@ public:
         return SUCCESS;
     }
 
+
+#define WITH_MUTEX 1
+
     cl_int dibr( Mat &src, Mat &depth,
                  Mat &filter_out,
                  Mat &out, Mat &depth_out,
+                 unsigned int *pixelMutex,
                  Mat &mask,
                  cl_kernel *ke, cl_program program,
                  int *shift_table_lookup)
@@ -851,7 +856,10 @@ public:
             dimageDepthOut = create_rw_buffer(out_bytes, depth_out.data, 0, NULL);
             status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
             CHECK_OPENCL_ERROR(status, "");
-
+#if WITH_MUTEX
+            dimagePixelMutex = create_rw_buffer(out.rows * out.cols * sizeof(unsigned int), pixelMutex, 0, NULL);
+            status = write_buffer(dimagePixelMutex, out.rows * out.cols * sizeof(unsigned int), pixelMutex, event, 6);
+#endif
             dShiftLookup = create_rw_buffer(256 * sizeof (int), shift_table_lookup, 0, NULL);
             // For now, I only need to write this buffer one time. This will change only when the
             // camera change its position
@@ -877,20 +885,26 @@ public:
             status = write_buffer(dimageOut, out_bytes, out.data, event, 6);
             CHECK_OPENCL_ERROR(status, "");
 
-            status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
+            status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 6);
             CHECK_OPENCL_ERROR(status, "");
+
+#if WITH_MUTEX
+            status = write_buffer(dimagePixelMutex, out.rows * out.cols * sizeof(unsigned int), pixelMutex, event, 6);
+            CHECK_OPENCL_ERROR(status, "");
+#endif
 
             status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
             CHECK_OPENCL_ERROR(status, "");
         }
 
+        clFinish(queue);
         size_t local[3] = { 16, 9, 1 };
-        size_t global[3] =  { (size_t) src.cols,
-                              (size_t) src.rows,
-                              1 };
+        size_t global[3] = { (size_t) src.cols,
+                             (size_t) src.rows,
+                             1 };
         int s = 0, channels = 0;
-
         int arg = -1;
+
         //setting the kernel arguments
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepth);
         CHECK_OPENCL_ERROR(status, "");
@@ -898,10 +912,10 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthFiltered);
         CHECK_OPENCL_ERROR(status, "");
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.rows);
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.cols);
         CHECK_OPENCL_ERROR(status, "");
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.cols);
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.rows);
         CHECK_OPENCL_ERROR(status, "");
 
         s = src.step;
@@ -919,13 +933,18 @@ public:
         CHECK_OPENCL_ERROR(status, "");
 
         // Enqueue filter
-        status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
-        CHECK_OPENCL_ERROR(status, "");
+        // status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
+        // CHECK_OPENCL_ERROR(status, "");
         // End filter
 
         // start dibr
         kernel = ke[1];
         int S = 20;
+
+        local[0] = 16;
+        local[1] = 9;
+        global[0] = (size_t) src.cols;
+        global[1] = (size_t) src.rows;
 
         arg = -1;
         //setting the kernel arguments
@@ -940,6 +959,10 @@ public:
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
         CHECK_OPENCL_ERROR(status, "");
+#if 1
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimagePixelMutex);
+        CHECK_OPENCL_ERROR(status, "");
+#endif
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageMask);
         CHECK_OPENCL_ERROR(status, "");
@@ -978,14 +1001,21 @@ public:
 
         // Start hole-filling
         kernel = ke[2];
-        global[0] *= 2;
         arg = -1;
+
+        local[0] = 16;
+        local[1] = 9;
+        global[0] = (size_t) src.cols * 2;
+        global[1] = (size_t) src.rows;
 
         //setting the kernel arguments
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageIn);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageOut);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageMask);
@@ -1013,7 +1043,7 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
         CHECK_OPENCL_ERROR(status, "");
 
-        int INTERPOLATION_HALF_SIZE_WINDOW = 10;
+        int INTERPOLATION_HALF_SIZE_WINDOW = 5;
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
         CHECK_OPENCL_ERROR(status, "");
 
@@ -1021,18 +1051,15 @@ public:
         CHECK_OPENCL_ERROR(status, "");
         // End hole-filling
 
-        clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
-
         //waiting for the kernel to complete
         /* status = clWaitForEvents(1, &event[0]);
-        CHECK_OPENCL_ERROR(status, "");
-        clFinish(queue); */
+        CHECK_OPENCL_ERROR(status, ""); */
+        clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
 
         status = read_buffer(dimageOut, out_bytes, out.data, event, 1);
         CHECK_OPENCL_ERROR(status, "");
-
         status = clWaitForEvents (1, &event[1]);
-        CHECK_OPENCL_ERROR(status, "");
+        clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
 
         return SUCCESS;
     }
