@@ -819,13 +819,13 @@ public:
         return SUCCESS;
     }
 
-
-#define WITH_MUTEX 1
-
-    cl_int dibr( Mat &src, Mat &depth,
+#define WITH_LOCK 1
+    cl_int dibr( Mat &src,
+                 Mat &depth,
                  Mat &filter_out,
-                 Mat &out, Mat &depth_out,
-                 unsigned int *pixelMutex,
+                 Mat &out,
+                 Mat &depth_out,
+                 int *pixelMutex,
                  Mat &mask,
                  cl_kernel *ke, cl_program program,
                  int *shift_table_lookup)
@@ -835,69 +835,68 @@ public:
         cl_int status;
         cl_event event[8];
 
+        // input bytes
         size_t bytes = src.rows * src.step * sizeof(unsigned char);
+        size_t depth_bytes = depth.rows * depth.step * sizeof(unsigned char);
         size_t filter_bytes = FILTER_SIZE * FILTER_SIZE * sizeof(float);
+        size_t shift_lookup_table_bytes = 256 * sizeof (int);
+
+        // Output bytes
         size_t out_bytes = out.rows * out.step * sizeof(unsigned char);
         size_t mask_bytes = mask.rows * mask.step * sizeof (unsigned char);
-        size_t shift_lookup_table_bytes = 256 * sizeof (int);
+        size_t pixel_mutex_bytes = out.rows * out.cols * sizeof (int);
 
         // Begin filter
         if(flag == 0)
         {
-            dimageDepth = create_rw_buffer(bytes, depth.data, 0, NULL);
-            dimageDepthFiltered = create_rw_buffer(bytes, filter_out.data, 0, NULL);
-            dimageFilter = create_rw_buffer(filter_bytes, filter, 0, NULL);
+            dimageDepth = create_rw_buffer(depth_bytes, depth.data, 0, NULL);
+            dimageDepthFiltered = create_rw_buffer(depth_bytes, filter_out.data, 0, NULL);
 
-            status = write_buffer(dimageFilter, filter_bytes, filter, event, 5);
+            dimageFilter = create_rw_buffer(filter_bytes, filter, 0, NULL);
+            status = write_buffer(dimageFilter, filter_bytes, filter, event, 5); // I just need to write this one time
             CHECK_OPENCL_ERROR(status, "");
 
             dimageIn = create_rw_buffer(bytes, src.data, 0, NULL);
             dimageOut = create_rw_buffer(out_bytes, out.data, 0, NULL);
             dimageDepthOut = create_rw_buffer(out_bytes, depth_out.data, 0, NULL);
-            status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
-            CHECK_OPENCL_ERROR(status, "");
-#if WITH_MUTEX
-            dimagePixelMutex = create_rw_buffer(out.rows * out.cols * sizeof(unsigned int), pixelMutex, 0, NULL);
-            status = write_buffer(dimagePixelMutex, out.rows * out.cols * sizeof(unsigned int), pixelMutex, event, 6);
+
+#if WITH_LOCK
+            dimagePixelMutex = create_rw_buffer(pixel_mutex_bytes, pixelMutex, 0, NULL);
 #endif
-            dShiftLookup = create_rw_buffer(256 * sizeof (int), shift_table_lookup, 0, NULL);
-            // For now, I only need to write this buffer one time. This will change only when the
-            // camera change its position
-            status = write_buffer(dShiftLookup, shift_lookup_table_bytes, shift_table_lookup, event, 5);
-            CHECK_OPENCL_ERROR(status, "");
+            dShiftLookup = create_rw_buffer(shift_lookup_table_bytes, shift_table_lookup, 0, NULL);
 
             dimageMask = create_rw_buffer(mask_bytes, mask.data, 0, NULL);
-            status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
-            CHECK_OPENCL_ERROR(status, "");
             flag = 1;
         }
-        else
-        {
-            status = write_buffer(dShiftLookup, shift_lookup_table_bytes, shift_table_lookup, event, 5);
-            CHECK_OPENCL_ERROR(status, "");
 
-            status = write_buffer(dimageDepth, bytes, depth.data, event, 5);
-            CHECK_OPENCL_ERROR(status, "");
 
-            status = write_buffer(dimageIn, bytes, src.data, event, 4);
-            CHECK_OPENCL_ERROR(status, "");
+        //Write buffers!!
+        status = write_buffer(dShiftLookup, shift_lookup_table_bytes, shift_table_lookup, event, 1);
+        CHECK_OPENCL_ERROR(status, "");
 
-            status = write_buffer(dimageOut, out_bytes, out.data, event, 6);
-            CHECK_OPENCL_ERROR(status, "");
+        status = write_buffer(dimageDepth, depth_bytes, depth.data, event, 2);
+        CHECK_OPENCL_ERROR(status, "");
 
-            status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 6);
-            CHECK_OPENCL_ERROR(status, "");
+        status = write_buffer(dimageIn, bytes, src.data, event, 3);
+        CHECK_OPENCL_ERROR(status, "");
 
-#if WITH_MUTEX
-            status = write_buffer(dimagePixelMutex, out.rows * out.cols * sizeof(unsigned int), pixelMutex, event, 6);
-            CHECK_OPENCL_ERROR(status, "");
+        // The following buffer should be cleared! Maybe we could do that using the GPU
+        status = write_buffer(dimageOut, out_bytes, out.data, event, 4);
+        CHECK_OPENCL_ERROR(status, "");
+
+        status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
+        CHECK_OPENCL_ERROR(status, "");
+
+#if WITH_LOCK
+        status = write_buffer(dimagePixelMutex, pixel_mutex_bytes, pixelMutex, event, 6);
+        CHECK_OPENCL_ERROR(status, "");
 #endif
-
-            status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
-            CHECK_OPENCL_ERROR(status, "");
-        }
+        status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
+        CHECK_OPENCL_ERROR(status, "");
 
         clFinish(queue);
+
+        // Ok! Let's start to compute now!
         size_t local[3] = { 16, 9, 1 };
         size_t global[3] = { (size_t) src.cols,
                              (size_t) src.rows,
@@ -959,7 +958,7 @@ public:
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
         CHECK_OPENCL_ERROR(status, "");
-#if 1
+#if WITH_LOCK
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimagePixelMutex);
         CHECK_OPENCL_ERROR(status, "");
 #endif
@@ -1043,7 +1042,7 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
         CHECK_OPENCL_ERROR(status, "");
 
-        int INTERPOLATION_HALF_SIZE_WINDOW = 5;
+        int INTERPOLATION_HALF_SIZE_WINDOW = 2;
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
         CHECK_OPENCL_ERROR(status, "");
 
@@ -1051,9 +1050,6 @@ public:
         CHECK_OPENCL_ERROR(status, "");
         // End hole-filling
 
-        //waiting for the kernel to complete
-        /* status = clWaitForEvents(1, &event[0]);
-        CHECK_OPENCL_ERROR(status, ""); */
         clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
 
         status = read_buffer(dimageOut, out_bytes, out.data, event, 1);

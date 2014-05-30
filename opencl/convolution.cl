@@ -1,40 +1,9 @@
 #define DATA_TYPE unsigned char
 
-// Converts an rgb value to YUV
-uint3 rgb2YUV(int r, int g, int b)
-{
-    uint3 YUV = (0.299*r + 0.587*g + 0.114*b,
-                 (b-YUV.x)*0.565,
-                 (r-YUV.x)*0.713);
-    return YUV;
-}
-
 float rgb2Y(DATA_TYPE r, DATA_TYPE g, DATA_TYPE b)
 {
     float Y = (float)(0.299)*(float)r + (float)(0.587)*(float)g + (float)(0.114)*(float)b;
     return Y;
-}
-
-// Put pixel in a BGR image type
-void putPixel ( __global DATA_TYPE *image,
-                int src_step, int channel,
-                int x, int y,
-                unsigned char r, unsigned char g, unsigned char b)
-{
-    int idx = (y * src_step) + (x*channel);
-    image [idx] = b;
-    image [idx+1] = g;
-    image [idx+2] = r;
-}
-
-uint3 getPixel ( __constant DATA_TYPE *image,
-                int src_step, int channel,
-                int x, int y)
-{
-    int idx = (y * src_step) + (x * channel);
-    return ( /*b = */ image [idx],
-              /*g = */ image [idx+1],
-              /*r = */ image [idx+2]);
 }
 
 #define GHOST_THRESHOLD -100
@@ -79,7 +48,7 @@ __kernel void dibr (
        __constant DATA_TYPE *src, /* Can we change that for a uchar3 ? */
        __constant DATA_TYPE  *depth,
        __global DATA_TYPE *out,
-       __global DATA_TYPE  *depth_out,
+       __global DATA_TYPE *depth_out,
 #if WITH_LOCK
        volatile __global int *depth_mutex,
 #endif
@@ -97,17 +66,13 @@ __kernel void dibr (
 //{
         int idx = (y*src_step) + (x*channel);
 
-        // if ( isGhost (x, y, depth, src_step, channel, cols, rows) ) // Should not project ghost pixels
-        //    continue;
+        //if ( isGhost (x, y, depth, src_step, channel, cols, rows) ) // Should not project ghost pixels
+        //   return;
 
-        DATA_TYPE b = depth[idx];
-        DATA_TYPE g = depth[idx + 1];
-        DATA_TYPE r = depth[idx + 2];
-        int Y, U, V;
+        int D = depth[ y * (mask_step/2) + x];
+        int shift = depth_shift_table_lookup [D];
 
-        float D = rgb2Y(r, g, b);
-        int shift = depth_shift_table_lookup [ (int)D];
-
+        DATA_TYPE b, g, r;
         b = src [idx];
         g = src [idx+1];
         r = src [idx+2];
@@ -124,11 +89,11 @@ __kernel void dibr (
                 {
                     if (atomic_cmpxchg (depth_mutex + (y * 2 * cols + x + S - shift), 0, 1) == 0) // got the lock
                     {
+#endif
                         int previousDepthOut = depth_out[newidx];
                         if ( mask [newidx_mask] != '1' ||
-                             D > previousDepthOut ) // I need to process
+                             D > previousDepthOut) // I need to process
                         {
-#endif
                             int currentMask = mask[newidx_mask];
                             out [newidx] = b;
                             out [newidx+1] = g;
@@ -136,17 +101,8 @@ __kernel void dibr (
 
                             mask [newidx_mask] = '1';
                             depth_out[newidx] = (char)D;
-                             /* else if ((int) D == currentDepthOut && newidx > idx)
-                             {
-                                 out [newidx] = b;
-                                 out [newidx+1] = g;
-                                 out [newidx+2] = r;
-
-                                 mask [newidx_mask] = '1';
-                                 depth_out[newidx] = (int)D;
-                             } */
-#if WITH_LOCK
                         }
+#if WITH_LOCK
                         processed = 1;
                         // free the lock
                         atomic_xchg (depth_mutex + (y * 2 * cols + x + S - shift), 0);
@@ -156,35 +112,37 @@ __kernel void dibr (
 #endif
 
             }
-/*
-            if( x + shift - S >= 0 && x + shift - S < cols )
+
+            if( (x + shift - S >= 0) && (x + shift - S) < cols )
             {
-                int newidx = (y  * out_step) + (x + cols + shift - S) * channel;
+                int newidx = (y  * out_step) + ((x + shift - S) + cols) * channel;
                 int newidx_mask =  y * mask_step + (x + shift - S) + cols;
-                int currentDepthOut = depth_out [newidx];
-                int currentMask = mask[newidx_mask];
-
-                if( currentMask != '1' ||
-                    (int) D >= depth_out [newidx] )
+#if WITH_LOCK
+                int processed = 0;
+                while (!processed)
                 {
-                    out [newidx] = b;
-                    out [newidx+1] = g;
-                    out [newidx+2] = r;
+                    if (atomic_cmpxchg (depth_mutex + (y * 2 * cols + (x + S - shift) + cols), 0, 1) == 0) // got the lock
+                    {
+#endif
+                        int previousDepthOut = depth_out[newidx];
+                        if ( mask [newidx_mask] != '1' ||
+                             D > previousDepthOut) // I need to process
+                        {
+                            out [newidx]   = b;
+                            out [newidx+1] = g;
+                            out [newidx+2] = r;
 
-                    mask [newidx_mask] = '1';
-                    depth_out[newidx] = (int)D;
+                            mask [newidx_mask] = '1';
+                            depth_out[newidx] = D;
+                         }
+#if WITH_LOCK
+                    }
+                    processed = 1;
+                    // free the lock
+                    atomic_xchg (depth_mutex + (y * 2 * cols + (x + S - shift) + cols), 0);
                 }
-
-                if ((int) D == currentDepthOut && newidx > idx)
-                {
-                    out [newidx] = b;
-                    out [newidx+1] = g;
-                    out [newidx+2] = r;
-
-                    mask [newidx_mask] = '1';
-                    depth_out[newidx] = (int)D;
-                }
-            } */
+#endif
+            }
 #else
             //shift *= 2;
             if( x + S - shift < cols)

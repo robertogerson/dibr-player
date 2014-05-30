@@ -77,7 +77,7 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   // This is a display dependant parameter and the maximum shift depends
   // on this value. However, the maximum disparity should not exceed
   // particular threshold, defined by phisiology of human vision.
-  int Npix = 1920/2; // 300 TODO: Make this adjustable in the interface.
+  int Npix = 100; // 300 TODO: Make this adjustable in the interface.
   int h1 = 0;
   int A = 0;
   int h2 = 0;
@@ -101,13 +101,14 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   h1 = - eye_sep * Npix * ( A - kfar ) / D;
   h2 = (h1/2) % 1; //  Warning: Previously this was rem(h1/2,1)
 
-  //if (h2>=0.5)
+  if (h2>=0.5)
     h = ceil(h1/2);
-  /*else
+  else
     h = floor(h1/2);
   if (h<0)
     // It will never come here due to Assumption 1
-    h = 0 - h;*/
+    h = 0 - h;
+
   return h;
 }
 
@@ -124,12 +125,164 @@ void update_depth_shift_lookup_table ()
   }
 }
 
+void get_YUV(char r, char g, char b, int &Y, int &U, int &V)
+{
+  Y = 0.299*r + 0.587*g + 0.114*b;
+  U = (b-Y)*0.565;
+  V = (r-Y)*0.713;
+}
+
+bool shift_surface ( Mat &image_color,
+                     Mat &image_depth,
+                     Mat &output,
+                     int S = 20,
+                     bool hole_filling = true)
+{
+  bool mask [output.rows][output.cols];
+  memset (mask, false, output.rows * output.cols * sizeof(bool));
+
+  // Calculate left image
+  // for every pixel change its value
+  for (int y = 0; y < image_color.rows; y++)
+  {
+    for (int x = image_color.cols-1; x >= 0; --x)
+    {
+      // get depth
+      int idx = y * image_depth.step + x * image_depth.channels();
+      int D = image_depth.data[idx];
+
+      char b, g, r;
+      idx = y * image_color.step + x * image_color.channels();
+      b = image_color.data[idx];
+      g = image_color.data[idx + 1];
+      r = image_color.data[idx + 2];
+
+      int shift = depth_shift_table_lookup [D];
+
+      if( (x + S - shift) < image_color.cols && (x + S - shift >= 0))
+      {
+        int newidx = y * output.step + (x + S - shift) * output.channels();
+        output.data[newidx] = b;
+        output.data[newidx + 1] = g;
+        output.data[newidx + 2] = r;
+
+        mask [y][x + S - shift] = 1;
+      }
+    }
+
+    if(hole_filling)
+    {
+      for (int x = 1; x < image_color.cols; x++)
+      {
+        if ( mask[y][x] == 0 )
+        {
+          if ( x - 7 < 0)
+          {
+            int oldidx = y * image_color.step + x * image_color.channels();
+            int newidx = y * output.step + x * output.channels();
+
+            output.data[newidx] = image_color.data[oldidx];
+            output.data[newidx + 1] = image_color.data[oldidx + 1];
+            output.data[newidx + 2] = image_color.data[oldidx + 2];
+          }
+          else
+          {
+            // interpolation between neighbord pixels
+            int r_sum = 0, g_sum = 0, b_sum = 0;
+            for (int x1 = x-7; x1 <= x-4; x1++)
+            {
+              int oldidx = y * image_color.step + x1 * image_color.channels();
+              b_sum += image_color.data[oldidx];
+              g_sum += image_color.data[oldidx+1];
+              r_sum += image_color.data[oldidx+2];
+            }
+
+            int newidx = y * output.step + x * output.channels();
+            output.data[newidx] = (b_sum / 4);
+            output.data[newidx+1] = (g_sum / 4);
+            output.data[newidx+2] = (r_sum / 4);
+          }
+        }
+      }
+    }
+  }
+
+  // Calculate right image
+  // for every pixel change its value
+  for (int y = 0; y < image_color.rows; y++)
+  {
+    for (int x = image_color.cols-1; x >= 0; --x)
+    {
+      // get depth
+      int idx = y * image_depth.step + x * image_depth.channels();
+      int D = image_depth.data[idx];
+
+      char b, g, r;
+      idx = y * image_color.step + x * image_color.channels();
+      b = image_color.data[idx];
+      g = image_color.data[idx + 1];
+      r = image_color.data[idx + 2];
+
+      int shift = depth_shift_table_lookup [D];
+
+      if( (x + shift - S >= 0)  && (x + shift - S < image_color.cols))
+      {
+        int newidx = y * output.step + ((x + shift - S) + image_color.cols) * output.channels();
+        output.data[newidx] = b;
+        output.data[newidx + 1] = g;
+        output.data[newidx + 2] = r;
+
+        mask [y][(x + shift - S) + image_color.cols] = 1;
+      }
+    }
+
+    if(hole_filling)
+    {
+      for (int x = image_color.cols-1 ; x >= 0; --x)
+      {
+        if ( mask[y][x + image_color.cols] == 0 )
+        {
+          if ( x + 7 > image_color.cols - 1)
+          {
+            int oldidx = y * image_color.step + x * image_color.channels();
+            int newidx = y * output.step + (x + image_color.cols) * output.channels();
+
+            output.data[newidx] = image_color.data[oldidx];
+            output.data[newidx + 1] = image_color.data[oldidx + 1];
+            output.data[newidx + 2] = image_color.data[oldidx + 2];
+          }
+          else
+          {
+            // interpolation between neighbord pixels
+            int r_sum = 0, g_sum = 0, b_sum = 0;
+            for (int x1 = x+4; x1 <= x+7; x1++)
+            {
+              int oldidx = y * image_color.step + x1 * image_color.channels();
+              b_sum += image_color.data[oldidx];
+              g_sum += image_color.data[oldidx+1];
+              r_sum += image_color.data[oldidx+2];
+            }
+
+            int newidx = y * output.step + (x + image_color.cols) * output.channels();
+            output.data[newidx] = (b_sum / 4);
+            output.data[newidx+1] = (g_sum / 4);
+            output.data[newidx+2] = (r_sum / 4);
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
 int is_input_video = 0;
 
 int main(int argc,char *argv[])
 {
-  int must_update = false;
   parse_opts(argc, argv); // First, parse the user options
+
+  int must_update = false, paused = false;  
+  int use_opencl = (opts['o'] == "1");
 
   VideoCapture inputVideo(opts['i']);              // Open input
   // inputVideo.set(CV_CAP_PROP_FPS, 10);
@@ -150,19 +303,19 @@ int main(int argc,char *argv[])
   is_input_video = (strstr(mime, "image") == NULL);
   magic_close(magic);
 
-  input.create(1080, 1920, CV_8UC(3));
+  input.create(1080, 1920 * 2, CV_8UC(3));
   resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
 
   // Creating image objects
   Mat color, depth, depth_filtered, depth_out, isHole;
   color.create(input.rows, input.cols/2, CV_8UC(3));
-  depth.create(input.rows, input.cols/2, CV_8UC(3));
+  // depth.create(input.rows, input.cols/2, CV_8UC(3));
   depth_out.create(input.rows, input.cols, CV_8UC(3));
   depth_filtered.create(input.rows, input.cols/2, CV_8UC(3));
-  isHole.create(input.rows, input.cols, CV_8UC1);  
+  isHole.create(input.rows, input.cols, CV_8UC1);
   output.create(input.rows, input.cols, CV_8UC(3));
 
-  unsigned int *pixelMutex = (unsigned int*)malloc (input.rows * input.cols * sizeof (unsigned int));
+  int *pixelMutex = (int*)malloc (input.rows * input.cols * sizeof (int));
 
   //creating OCLX object
   OCLX o;
@@ -176,6 +329,8 @@ int main(int argc,char *argv[])
   // Output Window
   bool fullscreen = opts.count('f');
   cvNamedWindow("Output", CV_WINDOW_NORMAL);
+
+  update_depth_shift_lookup_table();
 
   //initialising opencl structures
   o.init();
@@ -203,8 +358,9 @@ int main(int argc,char *argv[])
       Mat cropped = input(Rect(0, 0, (input.cols / 2), input.rows));
       cropped.copyTo(color);
       cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
-      imshow("depth", cropped);
-      cropped.copyTo(depth);
+      // cropped.copyTo(depth);
+      cvtColor(cropped, depth, CV_RGB2GRAY);
+      imshow("depth", depth);
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
@@ -216,7 +372,7 @@ int main(int argc,char *argv[])
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
 
-      memset(pixelMutex, 0, output.cols * output.rows * sizeof(unsigned int));
+      memset(pixelMutex, 0, output.cols * output.rows * sizeof(int));
       isHole.setTo(cv::Scalar(0));
       depth_out.setTo(cv::Scalar(0, 0, 0));
       output.setTo(cv::Scalar(255, 255, 255));
@@ -227,15 +383,21 @@ int main(int argc,char *argv[])
       //running parallel program
       gettimeofday(&now, NULL);
       // o.conv( color, output, &kernel[0], program );
-      o.dibr ( color,
-               depth,
-               depth_filtered,
-               output,
-               depth_out,
-               pixelMutex,
-               isHole,
-               &kernel[0], program,
-          &depth_shift_table_lookup[0] );
+        if(use_opencl)
+        {
+          o.dibr ( color,
+                 depth,
+                 depth_filtered,
+                 output,
+                 depth_out,
+                 pixelMutex,
+                 isHole,
+                 &kernel[0], program,
+                 &depth_shift_table_lookup[0] );
+        }
+        else
+          shift_surface(color, depth, output);
+
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
@@ -253,23 +415,24 @@ int main(int argc,char *argv[])
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << endl;
 
-    cout << "Key == " << key;
     if (key == 27)
       break;
-    else if (key == 'j') // LEFT_KEY
+    else if (key == 'j' || key == 1048682)
     {
       eye_sep -= 2;
       update_depth_shift_lookup_table();
       must_update = true;
     }
-    else if (key == 'l') //RIGHT_KEY
+    else if (key == 'k' || key == 1048683)
     {
       eye_sep += 2;
       update_depth_shift_lookup_table();
       must_update = true;
     }
     else if (is_input_video)
+    {
       must_update = true;
+    }
   }
 
   delete pixelMutex;
