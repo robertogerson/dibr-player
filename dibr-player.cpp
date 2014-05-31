@@ -12,8 +12,8 @@
 
 #include <vlc/vlc.h>
 
-const int SCREEN_WIDTH = 1920;
-const int SCREEN_HEIGHT = 1080;
+const int SCREEN_WIDTH = 1024;
+const int SCREEN_HEIGHT = 768;
 const int SCREEN_BPP = 32;
 bool fullscreen = false;
 bool hole_filling = false;
@@ -21,7 +21,6 @@ bool paused = true;
 
 // FCI
 #define PI 3.141592653589793
-
 bool depth_filter = true; 
 #define gauss_kernel_size 9
 double sigmax = 500.0, sigmay = 10;  // assymetric gaussian filter
@@ -99,7 +98,7 @@ SDL_Surface* crop_surface( SDL_Surface* orig, SDL_Surface *dest,
 /* Warp left and right image and holle-filling */
 bool shift_surface ( SDL_Surface *image_color,
                      SDL_Surface *image_depth,
-		      SDL_Surface *image_depth2, //FCI
+                     SDL_Surface *image_depth2, //FCI
                      SDL_Surface *left_color,
                      SDL_Surface *right_color,
                      int S = 58 );
@@ -182,7 +181,7 @@ bool init()
   }
 
   if (SDL_SetVideoMode( SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_BPP,
-                        SDL_FULLSCREEN | SDL_OPENGL) == NULL )
+                        /*SDL_FULLSCREEN |*/ SDL_OPENGL) == NULL )
   {
     return false;
   }
@@ -732,8 +731,8 @@ bool shift_surface ( SDL_Surface *image_color,
                      int S)
 {
 
-  SDL_FillRect(left_image, NULL, 0x000000);
-  SDL_FillRect(right_image, NULL, 0x000000);
+  SDL_FillRect(left_image, NULL, 0xFFFFFF);
+  SDL_FillRect(right_image, NULL, 0xFFFFFF);
 
   // This value is half od the maximun shift
   // Maximun shift comes at depth == 0
@@ -745,9 +744,11 @@ bool shift_surface ( SDL_Surface *image_color,
   bool mask [rows][cols];
   memset (mask, false, rows*cols*sizeof(bool));
 
+  // Remove from here
   for(int i = 0; i < N; i++)
   {
     depth_shift_table_lookup[i] = find_shiftMC3(i, N);
+    printf ("%d ", depth_shift_table_lookup[i]);
   }
   // enter filter here if necessary FCI***
   if (depth_filter)
@@ -780,7 +781,6 @@ bool shift_surface ( SDL_Surface *image_color,
         putpixel (left_image, x + S-shift, y, getpixel (image_color, x, y) );
         mask [y][x+S-shift] = 1;
       }
-
       // putpixel (left_image, x, y, getpixel (image_color, x, y) );
     }
 

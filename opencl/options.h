@@ -8,12 +8,12 @@ static struct option long_options[] =
 {
   /* These options don't set a flag.
      We distinguish them by their indices. */
-  {"help",        no_argument,        0, 'h'},
   {"fullscreen",  no_argument,        0, 'f'},
   {"opencl",      no_argument,        0, 'o'},
   {"stereo",      no_argument,        0, 's'},
   {"input",       required_argument,  0, 'i'},
-  {"resolution",  required_argument,  0, 'r'},
+  {"height",      required_argument,  0, 'h'},
+  {"width",       required_argument,  0, 'w'},
   {0, 0, 0, 0}
 };
 
@@ -24,7 +24,7 @@ void parse_opts(int argc, char **argv)
 
   while (1)
   {
-    c = getopt_long(argc, argv, "hfosi:",
+    c = getopt_long(argc, argv, "h:w:fosi:",
                     long_options, &option_index);
 
     /* detect end of the options */
@@ -34,9 +34,13 @@ void parse_opts(int argc, char **argv)
     switch (c)
     {
       case 'h':
-        printf ("TODO: print_help.\n");
-        opts['h'] = "1";
+        printf ("Run with h = %s.\n", optarg);
+        opts['h'] = optarg;
         break;
+      case 'w':
+        printf ("Run with w = %s.\n", optarg);
+        opts['w'] = optarg;
+      break;
       case 'i':
         printf ("Input file found: %s\n", optarg);
         opts['i'] = optarg;
@@ -55,10 +59,6 @@ void parse_opts(int argc, char **argv)
       case 's':
         printf ("Run with width == %s.\n", optarg);
         opts['s'] = optarg;
-        break;
-      case 'r':
-        printf ("Run with resolution == %s.\n", optarg);
-        opts['r'] = optarg;
         break;
       default:
       abort();

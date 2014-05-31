@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include "time.h"
 #include <iostream>
+#include <sstream>
 #include <ctime>
 #include <sys/time.h>
 
@@ -279,10 +280,23 @@ int is_input_video = 0;
 
 int main(int argc,char *argv[])
 {
+  int width = 1920, height = 1080;
   parse_opts(argc, argv); // First, parse the user options
 
   int must_update = false, paused = false;  
   int use_opencl = (opts['o'] == "1");
+  if (opts.count('w'))
+  {
+    std::istringstream ss(opts['w']);
+    ss >> width;
+  }
+  if (opts.count('h'))
+  {
+    std::istringstream ss(opts['h']);
+    ss >> height;
+  }
+
+  cout << width << "x" << height << endl;
 
   VideoCapture inputVideo(opts['i']);              // Open input
   // inputVideo.set(CV_CAP_PROP_FPS, 10);
@@ -303,7 +317,7 @@ int main(int argc,char *argv[])
   is_input_video = (strstr(mime, "image") == NULL);
   magic_close(magic);
 
-  input.create(1080, 1920 * 2, CV_8UC(3));
+  input.create(height, width, CV_8UC(3));
   resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
 
   // Creating image objects
