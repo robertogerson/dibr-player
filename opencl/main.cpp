@@ -324,12 +324,12 @@ int main(int argc,char *argv[])
   Mat color, depth, depth_filtered, depth_out, isHole;
   color.create(input.rows, input.cols/2, CV_8UC(3));
   // depth.create(input.rows, input.cols/2, CV_8UC(3));
-  depth_out.create(input.rows, input.cols, CV_8UC(3));
+  depth_out.create(input.rows, input.cols, CV_8UC(1));
   depth_filtered.create(input.rows, input.cols/2, CV_8UC(3));
   isHole.create(input.rows, input.cols, CV_8UC1);
   output.create(input.rows, input.cols, CV_8UC(3));
 
-  int *pixelMutex = (int*)malloc (input.rows * input.cols * sizeof (int));
+  int *pixelMutex = (int*) malloc (input.rows * input.cols * sizeof (int));
 
   //creating OCLX object
   OCLX o;
@@ -386,7 +386,7 @@ int main(int argc,char *argv[])
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
 
-      memset(pixelMutex, 0, output.cols * output.rows * sizeof(int));
+      memset(pixelMutex, 0, input.cols * input.rows * sizeof(int));
       isHole.setTo(cv::Scalar(0));
       depth_out.setTo(cv::Scalar(0, 0, 0));
       output.setTo(cv::Scalar(255, 255, 255));
@@ -399,15 +399,15 @@ int main(int argc,char *argv[])
       // o.conv( color, output, &kernel[0], program );
         if(use_opencl)
         {
-          o.dibr ( color,
-                 depth,
-                 depth_filtered,
-                 output,
-                 depth_out,
-                 pixelMutex,
-                 isHole,
-                 &kernel[0], program,
-                 &depth_shift_table_lookup[0] );
+          o.dibr ( &kernel[0], program,
+                    color,
+                    depth,
+                    depth_filtered,
+                    output,
+                    depth_out,
+                    isHole,
+                   &depth_shift_table_lookup[0],
+                    pixelMutex);
         }
         else
           shift_surface(color, depth, output);

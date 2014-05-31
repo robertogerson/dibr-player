@@ -820,15 +820,15 @@ public:
     }
 
 #define WITH_LOCK 1
-    cl_int dibr( Mat &src,
+    cl_int dibr( cl_kernel *ke, cl_program program,
+                 Mat &src,
                  Mat &depth,
                  Mat &filter_out,
                  Mat &out,
                  Mat &depth_out,
-                 int *pixelMutex,
                  Mat &mask,
-                 cl_kernel *ke, cl_program program,
-                 int *shift_table_lookup)
+                 int *shift_table_lookup,
+                 int *pixelMutex)
     {
         (void) program;
         cl_kernel kernel = ke[0];
@@ -1042,7 +1042,7 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
         CHECK_OPENCL_ERROR(status, "");
 
-        int INTERPOLATION_HALF_SIZE_WINDOW = 2;
+        int INTERPOLATION_HALF_SIZE_WINDOW = 5;
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
         CHECK_OPENCL_ERROR(status, "");
 

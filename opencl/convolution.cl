@@ -22,19 +22,13 @@ bool isGhost (
         for(int j = -1; j <= 1; j++ )
         {
             int neighbor_idx = (y + j)* depth_step + (x + i) * depth_channels;
-            DATA_TYPE b = depth[neighbor_idx];
-            DATA_TYPE g = depth[neighbor_idx+1];
-            DATA_TYPE r = depth[neighbor_idx+2];
-            float D = rgb2Y(r, g, b);
-            SUM += D;
+            DATA_TYPE D = depth[neighbor_idx];
+            SUM += (int)D;
         }
     }
 
     int idx = y * depth_step + x * depth_channels;
-    DATA_TYPE b = depth[idx];
-    DATA_TYPE g = depth[idx+1];
-    DATA_TYPE r = depth[idx+2];
-    float D = rgb2Y(r, g, b);
+    int D = (int)depth[idx];
 
     if (SUM - (9.0 * D) > GHOST_THRESHOLD)
         return 0;
@@ -42,6 +36,7 @@ bool isGhost (
     return 1;
 }
 
+#define WITH_PRECOMPILED_PARAMS 0
 #define WITH_LOCK 1
 
 __kernel void dibr (
@@ -53,9 +48,11 @@ __kernel void dibr (
        volatile __global int *depth_mutex,
 #endif
        __global DATA_TYPE *mask,
-       int rows, int cols,                      // We can pre-compile this values
+#if !WITH_PRECOMPILED_PARAMS
+       int rows, int cols,                     // We can pre-compile this values
        int src_step, int out_step, int channel, // We can pre-compile this values
        int mask_step,                           // We can pre-compile this values
+#endif
        __constant int *depth_shift_table_lookup,
        int S)
 {
@@ -87,41 +84,7 @@ __kernel void dibr (
                 int processed = 0;
                 while (!processed)
                 {
-                    if (atomic_cmpxchg (depth_mutex + (y * 2 * cols + x + S - shift), 0, 1) == 0) // got the lock
-                    {
-#endif
-                        int previousDepthOut = depth_out[newidx];
-                        if ( mask [newidx_mask] != '1' ||
-                             D > previousDepthOut) // I need to process
-                        {
-                            int currentMask = mask[newidx_mask];
-                            out [newidx] = b;
-                            out [newidx+1] = g;
-                            out [newidx+2] = r;
-
-                            mask [newidx_mask] = '1';
-                            depth_out[newidx] = (char)D;
-                        }
-#if WITH_LOCK
-                        processed = 1;
-                        // free the lock
-                        atomic_xchg (depth_mutex + (y * 2 * cols + x + S - shift), 0);
-                    }
-                    barrier(CLK_GLOBAL_MEM_FENCE);
-                }
-#endif
-
-            }
-
-            if( (x + shift - S >= 0) && (x + shift - S) < cols )
-            {
-                int newidx = (y  * out_step) + ((x + shift - S) + cols) * channel;
-                int newidx_mask =  y * mask_step + (x + shift - S) + cols;
-#if WITH_LOCK
-                int processed = 0;
-                while (!processed)
-                {
-                    if (atomic_cmpxchg (depth_mutex + (y * 2 * cols + (x + S - shift) + cols), 0, 1) == 0) // got the lock
+                    if (atomic_cmpxchg (depth_mutex + (y * 2 * cols + (x + S - shift)), 0, 1) == 0) // got the lock
                     {
 #endif
                         int previousDepthOut = depth_out[newidx];
@@ -134,12 +97,46 @@ __kernel void dibr (
 
                             mask [newidx_mask] = '1';
                             depth_out[newidx] = D;
+                        }
+#if WITH_LOCK
+                        processed = 1;
+                        // free the lock
+                        atomic_xchg (depth_mutex + (y * 2 * cols + (x + S - shift)), 0);
+                    }
+                    barrier(CLK_GLOBAL_MEM_FENCE);
+                }
+#endif
+
+            }
+
+            if( (x + shift - S >= 0) && (x + shift - S) < cols )
+            {
+                int newidx = (y * out_step) + ((x + shift - S) + cols) * channel;
+                int newidx_mask =  y * mask_step + ((x + shift - S) + cols);
+#if WITH_LOCK
+                int processed = 0;
+                while (!processed)
+                {
+                    if (atomic_cmpxchg (depth_mutex + (y * 2 * cols + (x + shift - S)) + cols, 0, 1) == 0) // got the lock
+                    {
+#endif
+                        int previousDepthOut = depth_out[newidx];
+                        if ( mask [newidx_mask] != '1' ||
+                             D > previousDepthOut) // I need to process
+                        {
+                            out [newidx]   = b;
+                            out [newidx+1] = g;
+                            out [newidx+2] = r;
+
+                            mask [newidx_mask] = '1';
+                            depth_out[newidx]  = D;
                          }
 #if WITH_LOCK
+                        processed = 1;
+                        // free the lock
+                        atomic_xchg (depth_mutex + (y * 2 * cols + (x + shift - S) + cols), 0);
                     }
-                    processed = 1;
-                    // free the lock
-                    atomic_xchg (depth_mutex + (y * 2 * cols + (x + S - shift) + cols), 0);
+                    barrier(CLK_GLOBAL_MEM_FENCE);
                 }
 #endif
             }
@@ -179,9 +176,12 @@ __kernel void hole_filling (
         __global DATA_TYPE *out,
         __global DATA_TYPE *depthOut,
        __global DATA_TYPE *mask,
+#if !WITH_PRECOMPILED_PARAMS
         int rows, int cols,
         int src_step, int out_step, int channel, int mask_step,
-        int INTERPOLATION_HALF_SIZE_WINDOW)
+        int INTERPOLATION_HALF_SIZE_WINDOW
+#endif
+        )
 {
     const int x = get_global_id(0);
     const int y = get_global_id(1);
@@ -199,15 +199,15 @@ __kernel void hole_filling (
         {
             for (int j = -INTERPOLATION_HALF_SIZE_WINDOW; j <= INTERPOLATION_HALF_SIZE_WINDOW; j++)
             {
-                if (x + i >= 0 && x + i < 2 * rows
-                    && y + j >= 0 && y + j <= cols)
+                if (x + i >= 0 && x + i < 2 * cols
+                    && y + j >= 0 && y + j <= rows)
                 {
-                    int idxOut1 = (y + j) * out_step + (x + i) * channel;
-                    int idxMask1 = (y + j) * mask_step + x + i;
+                    int idxDepthOut = (y + j) * out_step + (x + i) * channel;
+                    int idxMask1    = (y + j) * mask_step + (x + i);
 
                     if(mask[idxMask1] == '1') // its not a hole
-                        if (depthOut[idxOut1] < background)
-                            background = depthOut[idxOut1];
+                        if (depthOut[idxDepthOut] < background)
+                            background = depthOut[idxDepthOut];
                 }
              }
         }
@@ -217,13 +217,13 @@ __kernel void hole_filling (
         {
             for (int j = -INTERPOLATION_HALF_SIZE_WINDOW; j <= INTERPOLATION_HALF_SIZE_WINDOW; j++)
             {
-                if (x + i >= 0 && x + i < 2 * rows
-                    && y + j >= 0 && y + j <= cols)
+                if (x + i >= 0 && x + i < 2 * cols
+                    && y + j >= 0 && y + j <= rows)
                 {
                     int idxOut1 = (y + j) * out_step + (x + i) * channel;
-                    int idxMask1 = (y + j) * mask_step + x + i;
+                    int idxMask1 = (y + j) * mask_step + (x + i);
 
-                    if(mask[idxMask1] == '1' && depthOut[idxOut1] == background) // its not a hole and is background
+                    if(mask[idxMask1] == '1' && depthOut[idxOut1] == background) // it is not a hole and is background
                     {
                         DATA_TYPE r, g, b;
                         b = out [idxOut1];
@@ -241,7 +241,7 @@ __kernel void hole_filling (
         }
 
         int idxOut = y * out_step + x * channel;
-        out[idxOut] = (DATA_TYPE)(sumB/total);
+        out[idxOut]   = (DATA_TYPE)(sumB/total);
         out[idxOut+1] = (DATA_TYPE)(sumG/total);
         out[idxOut+2] = (DATA_TYPE)(sumR/total);
     }
@@ -250,8 +250,10 @@ __kernel void hole_filling (
 __kernel void convolute (
        __global DATA_TYPE *src,
        __global DATA_TYPE *out,
+#if !WITH_PRECOMPILED_PARAMS
        int rows, int cols,
        int src_step, int channel,
+#endif
        int FILTER_HALF_SIZE,
        __constant float *filter)
 {
