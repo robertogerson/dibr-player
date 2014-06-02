@@ -34,6 +34,7 @@
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/imgproc/imgproc_c.h"
 
 using namespace cv;
 using namespace std;
@@ -122,7 +123,7 @@ void update_depth_shift_lookup_table ()
   for(int i = 0; i < N; i++)
   {
     depth_shift_table_lookup[i] = find_shiftMC3(i, N, eye_sep);
-    printf ("%d ", depth_shift_table_lookup[i]);
+    // printf ("%d ", depth_shift_table_lookup[i]);
   }
 }
 
@@ -133,11 +134,16 @@ void get_YUV(char r, char g, char b, int &Y, int &U, int &V)
   V = (r-Y)*0.713;
 }
 
+#define BORDER_THRESHOLD 0.01
+
 bool shift_surface ( Mat &image_color,
                      Mat &image_depth,
+                     Mat &image_border,
                      Mat &output,
                      int S = 20,
-                     bool hole_filling = true)
+                     bool hole_filling = true,
+                     bool enable_dist = true,
+                     bool is_stereo = false)
 {
   bool mask [output.rows][output.cols];
   memset (mask, false, output.rows * output.cols * sizeof(bool));
@@ -151,6 +157,9 @@ bool shift_surface ( Mat &image_color,
       // get depth
       int idx = y * image_depth.step + x * image_depth.channels();
       int D = image_depth.data[idx];
+
+      if(enable_dist && image_border.at<float>(y, x) < BORDER_THRESHOLD)
+        continue;
 
       char b, g, r;
       idx = y * image_color.step + x * image_color.channels();
@@ -192,10 +201,10 @@ bool shift_surface ( Mat &image_color,
             int r_sum = 0, g_sum = 0, b_sum = 0;
             for (int x1 = x-7; x1 <= x-4; x1++)
             {
-              int oldidx = y * image_color.step + x1 * image_color.channels();
-              b_sum += image_color.data[oldidx];
-              g_sum += image_color.data[oldidx+1];
-              r_sum += image_color.data[oldidx+2];
+              int oldidx = y * output.step + x1 * output.channels();
+              b_sum += output.data[oldidx];
+              g_sum += output.data[oldidx+1];
+              r_sum += output.data[oldidx+2];
             }
 
             int newidx = y * output.step + x * output.channels();
@@ -208,72 +217,111 @@ bool shift_surface ( Mat &image_color,
     }
   }
 
-  // Calculate right image
-  // for every pixel change its value
-  for (int y = 0; y < image_color.rows; y++)
+  if(is_stereo)
   {
-    for (int x = image_color.cols-1; x >= 0; --x)
+    // Calculate right image
+    // for every pixel change its value
+    for (int y = 0; y < image_color.rows; y++)
     {
-      // get depth
-      int idx = y * image_depth.step + x * image_depth.channels();
-      int D = image_depth.data[idx];
-
-      char b, g, r;
-      idx = y * image_color.step + x * image_color.channels();
-      b = image_color.data[idx];
-      g = image_color.data[idx + 1];
-      r = image_color.data[idx + 2];
-
-      int shift = depth_shift_table_lookup [D];
-
-      if( (x + shift - S >= 0)  && (x + shift - S < image_color.cols))
+      for (int x = image_color.cols-1; x >= 0; --x)
       {
-        int newidx = y * output.step + ((x + shift - S) + image_color.cols) * output.channels();
-        output.data[newidx] = b;
-        output.data[newidx + 1] = g;
-        output.data[newidx + 2] = r;
+        // get depth
+        int idx = y * image_depth.step + x * image_depth.channels();
+        int D = image_depth.data[idx];
 
-        mask [y][(x + shift - S) + image_color.cols] = 1;
-      }
-    }
+        if(image_border.at<float>(y, x) < BORDER_THRESHOLD)
+          continue;
 
-    if(hole_filling)
-    {
-      for (int x = image_color.cols-1 ; x >= 0; --x)
-      {
-        if ( mask[y][x + image_color.cols] == 0 )
+        char b, g, r;
+        idx = y * image_color.step + x * image_color.channels();
+        b = image_color.data[idx];
+        g = image_color.data[idx + 1];
+        r = image_color.data[idx + 2];
+
+        int shift = depth_shift_table_lookup [D];
+
+        if( (x + shift - S >= 0)  && (x + shift - S < image_color.cols))
         {
-          if ( x + 7 > image_color.cols - 1)
-          {
-            int oldidx = y * image_color.step + x * image_color.channels();
-            int newidx = y * output.step + (x + image_color.cols) * output.channels();
+          int newidx = y * output.step + ((x + shift - S) + image_color.cols) * output.channels();
+          output.data[newidx] = b;
+          output.data[newidx + 1] = g;
+          output.data[newidx + 2] = r;
 
-            output.data[newidx] = image_color.data[oldidx];
-            output.data[newidx + 1] = image_color.data[oldidx + 1];
-            output.data[newidx + 2] = image_color.data[oldidx + 2];
-          }
-          else
+          mask [y][(x + shift - S) + image_color.cols] = 1;
+        }
+      }
+
+      if(hole_filling)
+      {
+        for (int x = image_color.cols-1 ; x >= 0; --x)
+        {
+          if ( mask[y][x + image_color.cols] == 0 )
           {
-            // interpolation between neighbord pixels
-            int r_sum = 0, g_sum = 0, b_sum = 0;
-            for (int x1 = x+4; x1 <= x+7; x1++)
+            if ( x + 7 > image_color.cols - 1)
             {
-              int oldidx = y * image_color.step + x1 * image_color.channels();
-              b_sum += image_color.data[oldidx];
-              g_sum += image_color.data[oldidx+1];
-              r_sum += image_color.data[oldidx+2];
-            }
+              int oldidx = y * image_color.step + x * image_color.channels();
+              int newidx = y * output.step + (x + image_color.cols) * output.channels();
 
-            int newidx = y * output.step + (x + image_color.cols) * output.channels();
-            output.data[newidx] = (b_sum / 4);
-            output.data[newidx+1] = (g_sum / 4);
-            output.data[newidx+2] = (r_sum / 4);
+              output.data[newidx] = image_color.data[oldidx];
+              output.data[newidx + 1] = image_color.data[oldidx + 1];
+              output.data[newidx + 2] = image_color.data[oldidx + 2];
+            }
+            else
+            {
+              // interpolation between neighbord pixels
+              int r_sum = 0, g_sum = 0, b_sum = 0;
+              for (int x1 = x+4; x1 <= x+7; x1++)
+              {
+                int oldidx = y * output.step + (x1 + image_color.cols) * output.channels();
+                b_sum += output.data[oldidx];
+                g_sum += output.data[oldidx+1];
+                r_sum += output.data[oldidx+2];
+              }
+
+              int newidx = y * output.step + (x + image_color.cols) * output.channels();
+              output.data[newidx] = (b_sum / 4);
+              output.data[newidx+1] = (g_sum / 4);
+              output.data[newidx+2] = (r_sum / 4);
+            }
           }
         }
       }
     }
   }
   return true;
+}
+
+void detect_border(Mat &src_gray, Mat &out)
+{
+#if  0
+  int scale = 1;
+  int delta = 0;
+  int ddepth = CV_16S;
+
+  /// Generate grad_x and grad_y
+  Mat grad_x, grad_y;
+  Mat abs_grad_x, abs_grad_y;
+
+  /// Gradient X
+  //Scharr( src_gray, grad_x, ddepth, 1, 0, scale, delta, BORDER_DEFAULT );
+  Sobel( src_gray, grad_x, ddepth, 1, 0, 3, scale, delta, BORDER_DEFAULT );
+  convertScaleAbs( grad_x, abs_grad_x );
+
+  /// Gradient Y
+  //Scharr( src_gray, grad_y, ddepth, 0, 1, scale, delta, BORDER_DEFAULT );
+  Sobel( src_gray, grad_y, ddepth, 0, 1, 3, scale, delta, BORDER_DEFAULT );
+  convertScaleAbs( grad_y, abs_grad_y );
+
+  /// Total Gradient (approximate)
+  addWeighted( abs_grad_x, 0.5, abs_grad_y, 0.5, 0, out );
+
+  GaussianBlur( out, out, Size(3, 3), 0, 0, BORDER_DEFAULT );
+#else
+  int X = 3;
+  int aperature_size = X;
+  int lowThresh = 70;
+  cv::Canny( src_gray, out, lowThresh, lowThresh*X, aperature_size );
+#endif
 }
 
 int is_input_video = 0;
@@ -283,7 +331,11 @@ int main(int argc,char *argv[])
   int width = 1920, height = 1080;
   parse_opts(argc, argv); // First, parse the user options
 
-  int must_update = false, paused = false;  
+  bool must_update = false, paused = false;
+  bool enable_hole_filling = true;
+  bool enable_dist = true;
+  int is_stereo = opts['s'] == "1";
+
   int use_opencl = (opts['o'] == "1");
   if (opts.count('w'))
   {
@@ -321,13 +373,27 @@ int main(int argc,char *argv[])
   resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
 
   // Creating image objects
-  Mat color, depth, depth_filtered, depth_out, isHole;
-  color.create(input.rows, input.cols/2, CV_8UC(3));
-  // depth.create(input.rows, input.cols/2, CV_8UC(3));
-  depth_out.create(input.rows, input.cols, CV_8UC(1));
-  depth_filtered.create(input.rows, input.cols/2, CV_8UC(3));
-  isHole.create(input.rows, input.cols, CV_8UC1);
-  output.create(input.rows, input.cols, CV_8UC(3));
+  Mat color, depth, depth_filtered, depth_out, isHole, border, dist;
+
+  int input_rows = input.rows;
+  int input_cols = input.rows;
+
+  if(is_stereo)
+    input_cols /= 2;
+
+  color.create(input_rows, input_cols, CV_8UC(3));
+  depth.create(input_rows, input_cols, CV_8UC(1));
+  depth_filtered.create(input_rows, input_cols, CV_8UC(3));
+  border.create(input_rows, input_cols, CV_8UC(1));
+  dist.create(input_rows, input_cols, CV_32F);
+
+  //Output info
+  int out_rows = input.rows;
+  int out_cols = input.cols;
+
+  depth_out.create(out_rows, out_cols, CV_8UC(1));
+  isHole.create(out_rows, out_cols, CV_8UC1);
+  output.create(out_rows, out_cols, CV_8UC(3));
 
   int *pixelMutex = (int*) malloc (input.rows * input.cols * sizeof (int));
 
@@ -356,8 +422,9 @@ int main(int argc,char *argv[])
     if (must_update)
     {
       gettimeofday(&now, NULL);
-      if(is_input_video)
+      if(is_input_video && !paused)
         inputVideo >> image;
+
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
@@ -372,15 +439,23 @@ int main(int argc,char *argv[])
       Mat cropped = input(Rect(0, 0, (input.cols / 2), input.rows));
       cropped.copyTo(color);
       cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
-      // cropped.copyTo(depth);
       cvtColor(cropped, depth, CV_RGB2GRAY);
       imshow("depth", depth);
+      detect_border(depth, border);
+      imshow("border", border);
+      Mat bw;
+      cv::threshold(border, bw, 40, 255, CV_THRESH_BINARY);
+      bw =  cv::Scalar::all(255) - bw;
+      imshow("bw", bw);
+      cv::distanceTransform(bw, dist, CV_DIST_L12, CV_DIST_MASK_PRECISE);
+      cv::normalize(dist, dist, 1., 0, cv::NORM_MINMAX);
+      imshow("dist", dist);
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
 
       gettimeofday(&now, NULL);
-      /* bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED ); */
+      // bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED );
       // GaussianBlur(cropped, depth, Size (101, 101), 10, 90);
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
@@ -410,7 +485,13 @@ int main(int argc,char *argv[])
                     pixelMutex);
         }
         else
-          shift_surface(color, depth, output);
+          shift_surface(color,
+                        depth,
+                        dist,
+                        output, 20,
+                        enable_hole_filling,
+                        enable_dist,
+                        is_stereo);
 
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
@@ -443,8 +524,18 @@ int main(int argc,char *argv[])
       update_depth_shift_lookup_table();
       must_update = true;
     }
+    else if(key == 'h' || key == 1048680)
+    {
+      enable_hole_filling = !enable_hole_filling;
+    }
+    else if(key == 'd' || key == 1048676)
+    {
+      enable_dist = !enable_dist;
+    }
     else if (is_input_video)
     {
+      if(key == ' ' || key == 1048608)
+        paused = !paused;
       must_update = true;
     }
   }

@@ -53,13 +53,9 @@ void parse_opts(int argc, char **argv)
         printf ("Run with opencl support.\n");
         opts['o'] = "1";
         break;
-      case 'e':
-        printf ("Run with stereo support.\n");
-        opts['e'] = "1";
       case 's':
-        printf ("Run with width == %s.\n", optarg);
-        opts['s'] = optarg;
-        break;
+        printf ("Run with stereo support.\n");
+        opts['s'] = "1";
       default:
       abort();
     }

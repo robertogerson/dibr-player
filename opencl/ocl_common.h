@@ -769,7 +769,7 @@ public:
             CHECK_OPENCL_ERROR(status, "");
         }
 
-        size_t local[3] = { 16, 16, 1 };
+        size_t local[3] = { 16, 9, 1 };
         size_t global[3] =  { RoundUp(local[0], src.cols),
                               RoundUp(local[1], src.rows),
                               1 };
@@ -819,7 +819,6 @@ public:
         return SUCCESS;
     }
 
-#define WITH_LOCK 1
     cl_int dibr( cl_kernel *ke, cl_program program,
                  Mat &src,
                  Mat &depth,
@@ -828,7 +827,9 @@ public:
                  Mat &depth_out,
                  Mat &mask,
                  int *shift_table_lookup,
-                 int *pixelMutex)
+                 int *pixelMutex,
+                 bool with_lock = true,
+                 bool with_hole_filling = true)
     {
         (void) program;
         cl_kernel kernel = ke[0];
@@ -860,9 +861,9 @@ public:
             dimageOut = create_rw_buffer(out_bytes, out.data, 0, NULL);
             dimageDepthOut = create_rw_buffer(out_bytes, depth_out.data, 0, NULL);
 
-#if WITH_LOCK
-            dimagePixelMutex = create_rw_buffer(pixel_mutex_bytes, pixelMutex, 0, NULL);
-#endif
+            if(with_lock)
+              dimagePixelMutex = create_rw_buffer(pixel_mutex_bytes, pixelMutex, 0, NULL);
+
             dShiftLookup = create_rw_buffer(shift_lookup_table_bytes, shift_table_lookup, 0, NULL);
 
             dimageMask = create_rw_buffer(mask_bytes, mask.data, 0, NULL);
@@ -887,10 +888,12 @@ public:
         status = write_buffer(dimageDepthOut, out_bytes, depth_out.data, event, 5);
         CHECK_OPENCL_ERROR(status, "");
 
-#if WITH_LOCK
-        status = write_buffer(dimagePixelMutex, pixel_mutex_bytes, pixelMutex, event, 6);
-        CHECK_OPENCL_ERROR(status, "");
-#endif
+        if(with_lock)
+        {
+          status = write_buffer(dimagePixelMutex, pixel_mutex_bytes, pixelMutex, event, 6);
+          CHECK_OPENCL_ERROR(status, "");
+        }
+
         status = write_buffer(dimageMask, mask_bytes, mask.data, event, 7);
         CHECK_OPENCL_ERROR(status, "");
 
@@ -905,7 +908,7 @@ public:
         int arg = -1;
 
         //setting the kernel arguments
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepth);
+        /* status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepth);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthFiltered);
@@ -929,7 +932,7 @@ public:
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageFilter);
-        CHECK_OPENCL_ERROR(status, "");
+        CHECK_OPENCL_ERROR(status, ""); */
 
         // Enqueue filter
         // status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
@@ -958,10 +961,12 @@ public:
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
         CHECK_OPENCL_ERROR(status, "");
-#if WITH_LOCK
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimagePixelMutex);
-        CHECK_OPENCL_ERROR(status, "");
-#endif
+
+        if(with_lock)
+        {
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimagePixelMutex);
+          CHECK_OPENCL_ERROR(status, "");
+        }
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageMask);
         CHECK_OPENCL_ERROR(status, "");
@@ -998,57 +1003,61 @@ public:
         CHECK_OPENCL_ERROR(status, "");
         // End dibr
 
-        // Start hole-filling
-        kernel = ke[2];
-        arg = -1;
 
-        local[0] = 16;
-        local[1] = 9;
-        global[0] = (size_t) src.cols * 2;
-        global[1] = (size_t) src.rows;
+        if(with_hole_filling)
+        {
+          // Start hole-filling
+          kernel = ke[2];
+          arg = -1;
 
-        //setting the kernel arguments
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageIn);
-        CHECK_OPENCL_ERROR(status, "");
+          local[0] = 16;
+          local[1] = 9;
+          global[0] = (size_t) src.cols * 2;
+          global[1] = (size_t) src.rows;
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageOut);
-        CHECK_OPENCL_ERROR(status, "");
+          //setting the kernel arguments
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageIn);
+          CHECK_OPENCL_ERROR(status, "");
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
-        CHECK_OPENCL_ERROR(status, "");
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageOut);
+          CHECK_OPENCL_ERROR(status, "");
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageMask);
-        CHECK_OPENCL_ERROR(status, "");
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthOut);
+          CHECK_OPENCL_ERROR(status, "");
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.rows);
-        CHECK_OPENCL_ERROR(status, "");
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageMask);
+          CHECK_OPENCL_ERROR(status, "");
 
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.cols);
-        CHECK_OPENCL_ERROR(status, "");
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.rows);
+          CHECK_OPENCL_ERROR(status, "");
 
-        s = src.step;
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
-        CHECK_OPENCL_ERROR(status, "");
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &src.cols);
+          CHECK_OPENCL_ERROR(status, "");
 
-        s = out.step;
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
-        CHECK_OPENCL_ERROR(status, "");
+          s = src.step;
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
+          CHECK_OPENCL_ERROR(status, "");
 
-        channels = (int)out.channels();
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &channels);
-        CHECK_OPENCL_ERROR(status, "");
+          s = out.step;
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
+          CHECK_OPENCL_ERROR(status, "");
 
-        s = mask.step;
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
-        CHECK_OPENCL_ERROR(status, "");
+          channels = (int)out.channels();
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &channels);
+          CHECK_OPENCL_ERROR(status, "");
 
-        int INTERPOLATION_HALF_SIZE_WINDOW = 5;
-        status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
-        CHECK_OPENCL_ERROR(status, "");
+          s = mask.step;
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
+          CHECK_OPENCL_ERROR(status, "");
 
-        status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
-        CHECK_OPENCL_ERROR(status, "");
-        // End hole-filling
+          int INTERPOLATION_HALF_SIZE_WINDOW = 5;
+          status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
+          CHECK_OPENCL_ERROR(status, "");
+
+          status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
+          CHECK_OPENCL_ERROR(status, "");
+          // End hole-filling
+        }
 
         clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
 

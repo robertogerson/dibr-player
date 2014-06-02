@@ -44,9 +44,9 @@ __kernel void dibr (
        __constant DATA_TYPE  *depth,
        __global DATA_TYPE *out,
        __global DATA_TYPE *depth_out,
-#if WITH_LOCK
+// #if WITH_LOCK
        volatile __global int *depth_mutex,
-#endif
+// #endif
        __global DATA_TYPE *mask,
 #if !WITH_PRECOMPILED_PARAMS
        int rows, int cols,                     // We can pre-compile this values
@@ -223,7 +223,7 @@ __kernel void hole_filling (
                     int idxOut1 = (y + j) * out_step + (x + i) * channel;
                     int idxMask1 = (y + j) * mask_step + (x + i);
 
-                    if(mask[idxMask1] == '1' && depthOut[idxOut1] == background) // it is not a hole and is background
+                    if(mask[idxMask1] == '1' && depthOut[idxOut1] == background) // it is not a hole and it is background
                     {
                         DATA_TYPE r, g, b;
                         b = out [idxOut1];
