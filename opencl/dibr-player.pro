@@ -6,7 +6,9 @@ CONFIG += debug
 SOURCES += main.cpp
 
 HEADERS += \
-    ocl_common.h \
+    dibr_cpu.h \
+    dibr_ocl.h \
+    eye_tracking.h \
     img_filters.h \
     options.h
 
