@@ -81,6 +81,11 @@ void get_YUV(char r, char g, char b, int &Y, int &U, int &V)
   V = (r-Y)*0.713;
 }
 
+/* This is the main function of DIBR in CPU.
+ * It is responsible to shift the pixels from the original
+ * to output image, based on depth values, and previously
+ * calculated depth_shift_lookup_table[].
+ */
 bool shift_surface ( Mat &image_color,
                      Mat &image_depth,
                      Mat &image_border,
@@ -234,4 +239,37 @@ bool shift_surface ( Mat &image_color,
     }
   }
   return true;
+}
+
+void detect_border(Mat &src_gray, Mat &out)
+{
+#if  0
+  int scale = 1;
+  int delta = 0;
+  int ddepth = CV_16S;
+
+  /// Generate grad_x and grad_y
+  Mat grad_x, grad_y;
+  Mat abs_grad_x, abs_grad_y;
+
+  /// Gradient X
+  //Scharr( src_gray, grad_x, ddepth, 1, 0, scale, delta, BORDER_DEFAULT );
+  Sobel( src_gray, grad_x, ddepth, 1, 0, 3, scale, delta, BORDER_DEFAULT );
+  convertScaleAbs( grad_x, abs_grad_x );
+
+  /// Gradient Y
+  //Scharr( src_gray, grad_y, ddepth, 0, 1, scale, delta, BORDER_DEFAULT );
+  Sobel( src_gray, grad_y, ddepth, 0, 1, 3, scale, delta, BORDER_DEFAULT );
+  convertScaleAbs( grad_y, abs_grad_y );
+
+  /// Total Gradient (approximate)
+  addWeighted( abs_grad_x, 0.5, abs_grad_y, 0.5, 0, out );
+
+  GaussianBlur( out, out, Size(3, 3), 0, 0, BORDER_DEFAULT );
+#else
+  int X = 3;
+  int aperature_size = X;
+  int lowThresh = 70;
+  cv::Canny( src_gray, out, lowThresh, lowThresh*X, aperature_size );
+#endif
 }
