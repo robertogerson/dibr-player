@@ -11,9 +11,11 @@ static struct option long_options[] =
   {"fullscreen",  no_argument,        0, 'f'},
   {"opencl",      no_argument,        0, 'o'},
   {"stereo",      no_argument,        0, 's'},
-  {"input",       required_argument,  0, 'i'},
+  {"width",       required_argument,  0, 'w'},
+  {"output",      required_argument,  0, 'u'},
   {"height",      required_argument,  0, 'h'},
   {"width",       required_argument,  0, 'w'},
+  {"headtracking",no_argument,  0, 't'},
   {0, 0, 0, 0}
 };
 
@@ -24,7 +26,7 @@ void parse_opts(int argc, char **argv)
 
   while (1)
   {
-    c = getopt_long(argc, argv, "h:w:fosi:",
+    c = getopt_long(argc, argv, "h:w:fosi:u:",
                     long_options, &option_index);
 
     /* detect end of the options */
@@ -45,6 +47,10 @@ void parse_opts(int argc, char **argv)
         printf ("Input file found: %s\n", optarg);
         opts['i'] = optarg;
         break;
+      case 'u':
+        printf ("Output file: %s\n", optarg);
+        opts['u'] = optarg;
+        break;
       case 'f':
         printf ("Use fullscreen.\n");
         opts['f'] = "1";
@@ -56,6 +62,9 @@ void parse_opts(int argc, char **argv)
       case 's':
         printf ("Run with stereo support.\n");
         opts['s'] = "1";
+      case 't':
+        printf ("Run with head tracking support.\n");
+        opts['t'] = "1";
       default:
       abort();
     }

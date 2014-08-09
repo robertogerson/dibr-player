@@ -35,6 +35,7 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 #include "opencv2/imgproc/imgproc_c.h"
+#include <opencv2/objdetect/objdetect.hpp>
 
 using namespace cv;
 using namespace std;
@@ -43,10 +44,32 @@ using namespace std;
 #include <CL/opencl.h>
 #include "ocl_common.h"
 
+// Options -  We need a better way to do that
+int  width = 1920/2, height = 1080/2;
 bool depth_filter = true;
+bool must_update = false, paused = false;
+bool enable_hole_filling = true;
+bool enable_dist = true;
+bool output_video = false;
+int  is_stereo = true; //(opts['s'] == "1");
+int  use_opencl = false;
+int  is_input_video = 0;
+//end options
+
+// Some global variables
+Mat image, input, output;
+#define N 256
+int depth_shift_table_lookup[N];
+double eye_sep = 0.25;
+
+// Some configuration sets
+#define EYE_SEP_STEP 0.25
 #define CONV_KERNEL_SIZE 9
+double BORDER_THRESHOLD = 0.009;
+
 double sigmax = 10.0, sigmay = 90;  // assymetric gaussian filter
 double conv_kernel [CONV_KERNEL_SIZE];
+// end
 
 using namespace std;
 
@@ -61,14 +84,8 @@ long int timeval_subtract(struct timeval *result, struct timeval *t2, struct tim
   return (diff);
 }
 
-Mat image, input, output;
-
-#define N 256
-int depth_shift_table_lookup[N];
-int eye_sep = 6;
-
 /* DIBR STARTS HERE */
-int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
+int find_shiftMC3(int depth, int Ny, double eye_sep = 6) // eye separation 6cm
 {
   (void) Ny;
 
@@ -79,13 +96,13 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   // This is a display dependant parameter and the maximum shift depends
   // on this value. However, the maximum disparity should not exceed
   // particular threshold, defined by phisiology of human vision.
-  int Npix = 100; // 300 TODO: Make this adjustable in the interface.
+  int Npix = 1920/2; // 300 TODO: Make this adjustable in the interface.
   int h1 = 0;
   int A = 0;
   int h2 = 0;
 
   // Viewing distance. Usually 300 cm
-  int D = 300;
+  int D = 100;
 
   // According to N8038
   knear = nknear / 64;
@@ -98,9 +115,12 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   // which is practically not the case.
   //
   // Interested user can remove this part to see what happens.
-  knear = 0;
-  A  = depth*(knear + kfar)/(n_depth-1);
+  // knear = 0;
+  A  = depth * (knear + kfar)/(n_depth-1);
   h1 = - eye_sep * Npix * ( A - kfar ) / D;
+
+  // return h1; // comment this for the original formulation
+
   h2 = (h1/2) % 1; //  Warning: Previously this was rem(h1/2,1)
 
   if (h2>=0.5)
@@ -110,7 +130,6 @@ int find_shiftMC3(int depth, int Ny, int eye_sep = 6) // eye separation 6cm
   if (h<0)
     // It will never come here due to Assumption 1
     h = 0 - h;
-
   return h;
 }
 
@@ -134,13 +153,11 @@ void get_YUV(char r, char g, char b, int &Y, int &U, int &V)
   V = (r-Y)*0.713;
 }
 
-#define BORDER_THRESHOLD 0.01
-
 bool shift_surface ( Mat &image_color,
                      Mat &image_depth,
                      Mat &image_border,
                      Mat &output,
-                     int S = 20,
+                     int S = 58,
                      bool hole_filling = true,
                      bool enable_dist = true,
                      bool is_stereo = false)
@@ -154,12 +171,12 @@ bool shift_surface ( Mat &image_color,
   {
     for (int x = image_color.cols-1; x >= 0; --x)
     {
+      if(enable_dist && image_border.at<float>(y, x) <= (float)BORDER_THRESHOLD)
+        continue;
+
       // get depth
       int idx = y * image_depth.step + x * image_depth.channels();
       int D = image_depth.data[idx];
-
-      if(enable_dist && image_border.at<float>(y, x) < BORDER_THRESHOLD)
-        continue;
 
       char b, g, r;
       idx = y * image_color.step + x * image_color.channels();
@@ -168,7 +185,6 @@ bool shift_surface ( Mat &image_color,
       r = image_color.data[idx + 2];
 
       int shift = depth_shift_table_lookup [D];
-
       if( (x + S - shift) < image_color.cols && (x + S - shift >= 0))
       {
         int newidx = y * output.step + (x + S - shift) * output.channels();
@@ -229,7 +245,7 @@ bool shift_surface ( Mat &image_color,
         int idx = y * image_depth.step + x * image_depth.channels();
         int D = image_depth.data[idx];
 
-        if(image_border.at<float>(y, x) < BORDER_THRESHOLD)
+        if(enable_dist && image_border.at<float>(y, x) < BORDER_THRESHOLD)
           continue;
 
         char b, g, r;
@@ -240,7 +256,8 @@ bool shift_surface ( Mat &image_color,
 
         int shift = depth_shift_table_lookup [D];
 
-        if( (x + shift - S >= 0)  && (x + shift - S < image_color.cols))
+        if( (x + shift - S >= 0)  && (x + shift - S < image_color.cols) &&
+            !(mask [y][(x + shift - S) + image_color.cols]))
         {
           int newidx = y * output.step + ((x + shift - S) + image_color.cols) * output.channels();
           output.data[newidx] = b;
@@ -324,24 +341,120 @@ void detect_border(Mat &src_gray, Mat &out)
 #endif
 }
 
-int is_input_video = 0;
+#ifdef ENABLE_EYE_TRACKING
+cv::CascadeClassifier face_cascade;
+// cv::CascadeClassifier eye_cascade;
+/**
+* Function to detect human face and the eyes from an image.
+*
+* @param im The source image
+* @param tpl Will be filled with the eye template, if detection success.
+* @param rect Will be filled with the bounding box of the eye
+* @return zero=failed, nonzero=success
+*/
+int detectEye(cv::Mat& im, cv::Mat& tpl, cv::Rect& rect)
+{
+  std::vector<cv::Rect> faces, eyes;
+  face_cascade.detectMultiScale(im, faces, 1.1, 2, 0|CV_HAAR_SCALE_IMAGE, cv::Size(30,30));
+
+  if (faces.size())
+  {
+    rect = faces[0];
+    tpl = im(rect);
+  }
+/*
+  for (int i = 0; i < faces.size(); i++)
+  {
+    cv::Mat face = im(faces[i]);
+    eye_cascade.detectMultiScale(face, eyes, 1.1, 2, 0|CV_HAAR_SCALE_IMAGE, cv::Size(20,20));
+
+    if (eyes.size())
+    {
+      rect = eyes[0] + cv::Point(faces[i].x, faces[i].y);
+      tpl = im(rect);
+    }
+  }
+  return eyes.size();
+*/
+  return faces.size();
+}
+
+/**
+* Perform template matching to search the user's eye in the given image.
+*
+* @param im The source image
+* @param tpl The eye template
+* @param rect The eye bounding box, will be updated with the new location of the eye
+*/
+void trackEye(cv::Mat& im, cv::Mat& tpl, cv::Rect& rect)
+{
+  cv::Size size(rect.width * 2, rect.height * 2);
+  cv::Rect window(rect + size - cv::Point(size.width/2, size.height/2));
+
+  window &= cv::Rect(0, 0, im.cols, im.rows);
+
+  cv::Mat dst(window.width - tpl.rows + 1, window.height - tpl.cols + 1, CV_32FC1);
+  cv::matchTemplate(im(window), tpl, dst, CV_TM_SQDIFF_NORMED);
+
+  double minval, maxval;
+  cv::Point minloc, maxloc;
+  cv::minMaxLoc(dst, &minval, &maxval, &minloc, &maxloc);
+
+  if (minval <= 0.2)
+  {
+    rect.x = window.x + minloc.x;
+    rect.y = window.y + minloc.y;
+  }
+  else
+    rect.x = rect.y = rect.width = rect.height = 0;
+}
+#endif
+
+bool handle_key(int key)
+{
+  if (key == 27 || key == 1048603)
+    return false;
+  else if (key == 'j' || key == 1048682)
+  {
+    eye_sep -= EYE_SEP_STEP;
+    update_depth_shift_lookup_table();
+    must_update = true;
+  }
+  else if (key == 'k' || key == 1048683)
+  {
+    eye_sep += EYE_SEP_STEP;
+    update_depth_shift_lookup_table();
+    must_update = true;
+  }
+  else if(key == 'h' || key == 1048680)
+  {
+    enable_hole_filling = !enable_hole_filling;
+  }
+  else if(key == 'd' || key == 1048676)
+  {
+    enable_dist = !enable_dist;
+  }
+  else if (is_input_video)
+  {
+    if(key == ' ' || key == 1048608)
+      paused = !paused;
+    must_update = true;
+  }
+
+  return true;
+}
 
 int main(int argc,char *argv[])
 {
-  int width = 1920, height = 1080;
   parse_opts(argc, argv); // First, parse the user options
 
-  bool must_update = false, paused = false;
-  bool enable_hole_filling = true;
-  bool enable_dist = true;
-  int is_stereo = opts['s'] == "1";
-
-  int use_opencl = (opts['o'] == "1");
+  use_opencl = (opts['o'] == "1");
   if (opts.count('w'))
   {
     std::istringstream ss(opts['w']);
     ss >> width;
   }
+
   if (opts.count('h'))
   {
     std::istringstream ss(opts['h']);
@@ -350,14 +463,49 @@ int main(int argc,char *argv[])
 
   cout << width << "x" << height << endl;
 
+#ifdef ENABLE_EYE_TRACKING
+  bool enable_head_tracking = ( opts.count('t') ) && ( opts['t'] == "1");
+  // begin eye tracking
+  // Open webcam
+  VideoCapture cap(0);
+  cv::Mat frame, eye_tpl;
+  cv::Rect eye_bb;
+  if(enable_head_tracking)
+  {
+    face_cascade.load("/usr/share/opencv/haarcascades/haarcascade_frontalface_alt2.xml");
+    // Check if everything is ok
+    if (face_cascade.empty() || !cap.isOpened())
+      return 1;
+
+    // Set video to 320x240
+    cap.set(CV_CAP_PROP_FRAME_WIDTH, 320);
+    cap.set(CV_CAP_PROP_FRAME_HEIGHT, 240);
+  }
+  // end eye tracking
+#endif
+
   VideoCapture inputVideo(opts['i']);              // Open input
-  // inputVideo.set(CV_CAP_PROP_FPS, 10);
+  inputVideo.set(CV_CAP_PROP_FPS, 10);
+
   if (!inputVideo.isOpened())
   {
     cout  << "Could not open the input video: " << opts['i'] << endl;
     return -1;
   }
   inputVideo >> image;
+
+  int ex = static_cast<int>(inputVideo.get(CV_CAP_PROP_FOURCC));
+  VideoWriter outputVideo;
+  if(opts.count('u'))
+  {
+    output_video = true;
+    outputVideo.open( opts['u'].c_str(),
+                      CV_FOURCC('P', 'I', 'M', '1'),
+                      inputVideo.get(CV_CAP_PROP_FPS),
+                      Size(width, height), true);
+
+    cout << "create output video " << opts['u'].c_str() << endl;
+  }
 
   // Get mime-type of input
   magic_t magic;
@@ -369,17 +517,17 @@ int main(int argc,char *argv[])
   is_input_video = (strstr(mime, "image") == NULL);
   magic_close(magic);
 
-  input.create(height, width, CV_8UC(3));
-  resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
-
   // Creating image objects
   Mat color, depth, depth_filtered, depth_out, isHole, border, dist;
 
-  int input_rows = input.rows;
-  int input_cols = input.rows;
+  input.create(height, width, CV_8UC(3));
+  resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
 
-  if(is_stereo)
-    input_cols /= 2;
+  int input_rows = input.rows;
+  int input_cols = input.cols / 2;
+
+  // if(is_stereo)
+  //   input_cols /= 2;
 
   color.create(input_rows, input_cols, CV_8UC(3));
   depth.create(input_rows, input_cols, CV_8UC(1));
@@ -392,8 +540,8 @@ int main(int argc,char *argv[])
   int out_cols = input.cols;
 
   depth_out.create(out_rows, out_cols, CV_8UC(1));
-  isHole.create(out_rows, out_cols, CV_8UC1);
   output.create(out_rows, out_cols, CV_8UC(3));
+  isHole.create(out_rows, out_cols, CV_8UC1);
 
   int *pixelMutex = (int*) malloc (input.rows * input.cols * sizeof (int));
 
@@ -440,23 +588,25 @@ int main(int argc,char *argv[])
       cropped.copyTo(color);
       cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
       cvtColor(cropped, depth, CV_RGB2GRAY);
+
+      // gettimeofday(&now, NULL);
+      // bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED );
+      // GaussianBlur(cropped, depth, Size (101, 101), 10, 90);
+      // gettimeofday(&end, NULL);
+      // diff = timeval_subtract(&result, &end, &now);
+      // cout << (float)diff << "\t";
+
       imshow("depth", depth);
       detect_border(depth, border);
       imshow("border", border);
+
       Mat bw;
       cv::threshold(border, bw, 40, 255, CV_THRESH_BINARY);
       bw =  cv::Scalar::all(255) - bw;
       imshow("bw", bw);
-      cv::distanceTransform(bw, dist, CV_DIST_L12, CV_DIST_MASK_PRECISE);
+      cv::distanceTransform(bw, dist, CV_DIST_C, CV_DIST_MASK_PRECISE);
       cv::normalize(dist, dist, 1., 0, cv::NORM_MINMAX);
       imshow("dist", dist);
-      gettimeofday(&end, NULL);
-      diff = timeval_subtract(&result, &end, &now);
-      cout << (float)diff << "\t";
-
-      gettimeofday(&now, NULL);
-      // bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED );
-      // GaussianBlur(cropped, depth, Size (101, 101), 10, 90);
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
@@ -479,19 +629,22 @@ int main(int argc,char *argv[])
                     depth,
                     depth_filtered,
                     output,
-                    depth_out,
+                    depth,
                     isHole,
-                   &depth_shift_table_lookup[0],
-                    pixelMutex);
+                    &depth_shift_table_lookup[0],
+                    pixelMutex,
+                    true,
+                    enable_hole_filling );
         }
         else
-          shift_surface(color,
-                        depth,
-                        dist,
-                        output, 20,
-                        enable_hole_filling,
-                        enable_dist,
-                        is_stereo);
+          shift_surface ( color,
+                         depth,
+                         dist,
+                         output,
+                         20,
+                         enable_hole_filling,
+                         enable_dist,
+                         is_stereo );
 
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
@@ -502,6 +655,11 @@ int main(int argc,char *argv[])
       imshow("Output", output);
 
       must_update = false;
+
+      if (output_video)
+      {
+        outputVideo.write(output);
+      }
     }
 
     gettimeofday(&now, NULL);
@@ -510,34 +668,50 @@ int main(int argc,char *argv[])
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << endl;
 
-    if (key == 27)
+    cout << "eye_sep:" << (float) eye_sep << endl;
+
+    if(!handle_key(key)) // It will return false if key is ESC
+        break;
+
+#ifdef ENABLE_EYE_TRACKING
+    cap >> frame;
+    if (frame.empty())
       break;
-    else if (key == 'j' || key == 1048682)
+
+    if(enable_head_tracking)
     {
-      eye_sep -= 2;
-      update_depth_shift_lookup_table();
-      must_update = true;
+      // Flip the frame horizontally, Windows users might need this
+      cv::flip(frame, frame, 1);
+
+      // Convert to grayscale and
+      // adjust the image contrast using histogram equalization
+      cv::Mat gray;
+      cv::cvtColor(frame, gray, CV_BGR2GRAY);
+
+
+      if (eye_bb.width == 0 && eye_bb.height == 0)
+      {
+        // Detection stage
+        // Try to detect the face and the eye of the user
+        detectEye(gray, eye_tpl, eye_bb);
+      }
+      else
+      {
+        // Tracking stage with template matching
+        trackEye(gray, eye_tpl, eye_bb);
+
+        // Draw bounding rectangle for the eye
+        cv::rectangle(frame, eye_bb, CV_RGB(0,255,0));
+
+        eye_sep = 6 - (eye_bb.x)/ 5;
+        update_depth_shift_lookup_table();
+        must_update;
+      }
     }
-    else if (key == 'k' || key == 1048683)
-    {
-      eye_sep += 2;
-      update_depth_shift_lookup_table();
-      must_update = true;
-    }
-    else if(key == 'h' || key == 1048680)
-    {
-      enable_hole_filling = !enable_hole_filling;
-    }
-    else if(key == 'd' || key == 1048676)
-    {
-      enable_dist = !enable_dist;
-    }
-    else if (is_input_video)
-    {
-      if(key == ' ' || key == 1048608)
-        paused = !paused;
-      must_update = true;
-    }
+
+    // Display video
+    cv::imshow("video", frame);
+#endif
   }
 
   delete pixelMutex;
