@@ -32,6 +32,7 @@ Usage
 Keyboard shortcuts
 ==================
   - h   - enable/disable hole filling.
+  - f   - enable/disable depth filtering.
   - j   - increase the baseline distance between left and right eyes.
   - k   - decrease the baseline distance between left and right eyes.
   - ESC - close the program.
