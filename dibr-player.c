@@ -13,6 +13,33 @@
  * You should have received a copy of the GNU General Public License
  * along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
  */
+/*************** DIBR Overview *************************************************
+ * Depth-image-based rendering is the process of genereting virtual views from
+ * a set of original view and associated depth frame. In special, this project
+ * is intended to generate a stereo-pair from a reference texture. The following
+ * 'image' shows schematically the process.
+ *   ___________ ___________
+ *  |           |           |
+ *  |  Texture  |   Depth   |------------ INPUT
+ *  |___________|___________|
+ *        |           |
+ *        |      _____|_____
+ *        |     |           |
+ *        |     |   Depth   |
+ *        |     | Filtering |
+ *        |     |___________|
+ *        |___________|
+ *              |
+ *        _____\|/______
+ *       |              |
+ *       |  3D Warping  |
+ *       |______________|
+ *              |
+ *   __________\|/__________
+ *  |           |           |
+ *  |    Left   |   Right   |------------ OUTPUT
+ *  |___________|___________|
+ ******************************************************************************/
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,21 +52,36 @@
 
 #include <vlc/vlc.h>
 
+#include "options.h"
+#include "sdl_aux.h"
+
 #define PI 3.141592653589793
+#define GAUSSIAN_KERNEL_SIZE 9
+#define RADDEG  57.29577951f
 
-const int SCREEN_WIDTH = 1024;
-const int SCREEN_HEIGHT = 768;
-const int SCREEN_BPP = 32;
-bool fullscreen = false;
-bool hole_filling = false;
-bool paused = true;
+struct user_params
+{
+  char *file_path;
 
-bool depth_filter = true; 
-#define gauss_kernel_size 9
+  /* Screen related params */
+  int screen_width;
+  int screen_height;
+  int screen_bpp;
+  bool fullscreen;
 
-double sigmax = 500.0, sigmay = 10;  // assymetric gaussian filter
-double gauss_kernel [gauss_kernel_size][gauss_kernel_size];
+  /* DIBR related params */
+  bool hole_filling;
+  bool paused;
+  bool depth_filter;
 
+  /* Gaussian filter parameters */
+  double sigmax;
+  double sigmay;
+};
+
+double gaussian_kernel[GAUSSIAN_KERNEL_SIZE][GAUSSIAN_KERNEL_SIZE];
+
+/***************** Depth filtering related functions **************************/
 double gaussian (double x, double mu, double sigma)
 {
   return exp ( -(((x-mu)/(sigma))*((x-mu)/(sigma)))/2.0 );
@@ -50,7 +92,9 @@ double oriented_gaussian (int x, int y,
 {
   return exp ( - ((x)*(x))/(2.0*sigma1) - ((y)*(y))/(2.0*sigma2));
 }
-/* vector < vector <double> > produce2dGaussianKernel ( int kernelRadius,
+
+/*
+vector < vector <double> > produce2dGaussianKernel ( int kernelRadius,
                                                      double sigmaX,
                                                      double sigmaY )
 {
@@ -69,597 +113,89 @@ double oriented_gaussian (int x, int y,
     }
 
   //normallize
-  for (int row = 0; row < kernel2d.size(0; row++)
+  for (int row = 0; row < kernel2d.size; row++)
     for (int col = 0; colr < kernel2d[row].size(); col++)
       kernel2d[row][col] /= sum;
-}*/
+}
+*/
 
-void calculate_gauss_kernel()
+void calc_gaussian_kernel(double sigmax, double sigmay)
 {
   double sum = 0;
-  for (int x = 0; x < gauss_kernel_size; x++)
+  for (int x = 0; x < GAUSSIAN_KERNEL_SIZE; x++)
   {
-    for (int y = 0; y < gauss_kernel_size; y++)
+    for (int y = 0; y < GAUSSIAN_KERNEL_SIZE; y++)
     {
-      int x1 = x - gauss_kernel_size/2;
-      int y1 = y - gauss_kernel_size/2;
-      gauss_kernel[x][y] = oriented_gaussian(x1, y1, sigmax, sigmay);
+      int x1 = x - GAUSSIAN_KERNEL_SIZE/2;
+      int y1 = y - GAUSSIAN_KERNEL_SIZE/2;
+      gaussian_kernel[x][y] = oriented_gaussian(x1, y1, sigmax, sigmay);
       /* gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
       gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
                             (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp (
                             -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 *
                             pow (sigmay, 2))); */
-      sum += gauss_kernel[x][y]; 
+      sum += gaussian_kernel[x][y];
     }
   }
 
-  for (int x = 0; x < gauss_kernel_size; x++)
-    for (int y = 0; y < gauss_kernel_size; y++)
-      gauss_kernel[x][y] /= sum;
+  for (int x = 0; x < GAUSSIAN_KERNEL_SIZE; x++)
+    for (int y = 0; y < GAUSSIAN_KERNEL_SIZE; y++)
+      gaussian_kernel[x][y] /= sum;
 }
 
-//FCI
-SDL_Event event;
-#define  RADDEG  57.29577951f
-
-/* Crop a SDL_Surface */
-SDL_Surface* crop_surface( SDL_Surface* orig, SDL_Surface *dest,
-                           int x, int y,
-                           unsigned int width, unsigned int height);
-
-// need image_depth2 after filter FCI
-
-/* Warp left and right image and holle-filling */
-bool shift_surface ( SDL_Surface *image_color,
-                     SDL_Surface *image_depth,
-                     SDL_Surface *image_depth2, //FCI
-                     SDL_Surface *left_color,
-                     SDL_Surface *right_color,
-                     int S = 58 );
-// FCI
-SDL_Surface* filter_depth( SDL_Surface* image_depth,
-                           SDL_Surface* image_depth2,
-                           int x, int y,
-                           unsigned int width, unsigned int height);
-
-
-
-/* LibVLC functions */
-struct ctx
+SDL_Surface *adaptive_filter_Park_et_al( SDL_Surface* depth_frame,
+                                         SDL_Surface* depth_frame_filtered )
 {
-  SDL_Surface *surf;
-  SDL_mutex *mutex;
-};
-
-static void *lock(void *data, void **p_pixels)
-{
-  struct ctx *ctx = (struct ctx*)data;
-
-  SDL_LockMutex(ctx->mutex);
-  SDL_LockSurface(ctx->surf);
-  *p_pixels = ctx->surf->pixels;
-  return NULL; /* picture identifier, not needed here */
-}
-
-static void unlock(void *data, void *id, void *const *p_pixels)
-{
-  struct ctx *ctx = (struct ctx*)data;
-
-  SDL_UnlockSurface(ctx->surf);
-  SDL_UnlockMutex(ctx->mutex);
-
-  assert(id == NULL); /* picture identifier, not needed here */
-}
-
-static void display(void *data, void *id)
-{
-  /* VLC wants to display the video */
-  (void) data;
-  assert(id == NULL);
-}
-/* end libVLC */
-
-namespace var
-{
-  int frame_start_time = 0;
-  int frame_current_time = 0;
-  int frame_count = 0;
-}
-
-/* Initializes Core OpenGL Features */
-bool opengl_init()
-{
-  glEnable( GL_TEXTURE_2D );
-
-  glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
-  glViewport( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-  glClear( GL_COLOR_BUFFER_BIT );
-
-  glMatrixMode( GL_PROJECTION );
-  glLoadIdentity();
-
-  glOrtho(0.0f, SCREEN_WIDTH, SCREEN_HEIGHT, 0.0f, -1.0f, 1.0f);
-
-  glMatrixMode( GL_MODELVIEW );
-  glLoadIdentity();
-  return true;
-}
-
-/* Initializes SDL, OpenGL and video and window */
-bool init()
-{
-  if( SDL_Init(SDL_INIT_EVERYTHING) < 0 )
-  {
-    return false;
-  }
-
-  if (SDL_SetVideoMode( SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_BPP,
-                        /*SDL_FULLSCREEN |*/ SDL_OPENGL) == NULL )
-  {
-    return false;
-  }
-
-  SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 ); // *new*
-
-  if( opengl_init() == false )
-  {
-    return false;
-  }
-
-// SDL_WM_SetCaption("SDL-OpenGL Graphics : Part IV - 3D Shapes", NULL);
- SDL_WM_SetCaption("DIBR player - Guassian FilterA", NULL);
-
-  return true;
-}
-
-/* Removes objects before game closes */
-void clean_up()
-{
-  SDL_Quit();
-}
-
-int main(int argc, char* argv[])
-{
-  calculate_gauss_kernel();
-  SDL_Surface *surface;
-  Uint32 rmask, gmask, bmask, amask;
-
-  /* SDL interprets each pixel as a 32-bit number, so our masks must depend
-     on the endianness (byte order) of the machine */
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-  rmask = 0xff000000;
-  gmask = 0x00ff0000;
-  bmask = 0x0000ff00;
-  amask = 0x000000ff;
-#else
-  rmask = 0x000000ff;
-  gmask = 0x0000ff00;
-  bmask = 0x00ff0000;
-  amask = 0xff000000;
-#endif
-
-  bool quit = false;
-  if(init() == false)
-    return 1;
-
-  if(argc < 2)
-  {
-      printf("Usage: %s <filename>\n", argv[0]);
-      return EXIT_FAILURE;
-  }
-
-  libvlc_instance_t *libvlc;
-  libvlc_media_t *m;
-  libvlc_media_player_t *mp;
-
-  char const *vlc_argv[] =
-  {
-    "--no-audio", /* skip any audio track */
-    "--no-xlib"
-  };
-
-  int vlc_argc = sizeof(vlc_argv) / sizeof(*vlc_argv);
-  struct ctx ctx;
-  ctx.mutex = SDL_CreateMutex();
-  ctx.surf = SDL_CreateRGBSurface( SDL_SWSURFACE,
-                                   SCREEN_WIDTH,
-                                   SCREEN_HEIGHT,
-                                   32,
-                                   rmask,
-                                   gmask,
-                                   bmask,
-                                   0 );
-
-  SDL_Surface *image = ctx.surf;
-  SDL_Surface *image_all = SDL_CreateRGBSurface( image->flags,
-                                                 image->w, image->h*2,
-                                                 image->format->BitsPerPixel,
-                                                 image->format->Rmask,
-                                                 image->format->Gmask,
-                                                 image->format->Bmask,
-                                                 image->format->Amask );
-
-  SDL_Surface *image_color = SDL_CreateRGBSurface( image->flags,
-                                                   image->w/2, image->h,
-                                                   image->format->BitsPerPixel,
-                                                   image->format->Rmask,
-                                                   image->format->Gmask,
-                                                   image->format->Bmask,
-                                                   image->format->Amask );
-  crop_surface( image, image_color, 0, 0, image->w/2, image->h );
-
-  SDL_Surface *image_depth = SDL_CreateRGBSurface( image->flags,
-                                                   image->w/2, image->h,
-                                                   image->format->BitsPerPixel,
-                                                   image->format->Rmask,
-                                                   image->format->Gmask,
-                                                   image->format->Bmask,
-                                                   image->format->Amask );
-  crop_surface( image, image_depth, image->w/2, 0, image->w/2, image->h);
-
-// FCI
-  SDL_Surface *image_depth2 = SDL_CreateRGBSurface( image->flags,
-                                                    image->w/2, image->h,
-                                                    image->format->BitsPerPixel,
-                                                    image->format->Rmask,
-                                                    image->format->Gmask,
-                                                    image->format->Bmask,
-                                                    image->format->Amask );
-  crop_surface( image, image_depth2, image->w/2, 0, image->w/2, image->h);
-
-
-// Apply filter to image_depth after crop FCI
-
-  SDL_Surface *left_color, *right_color, *stereo_color;
-
-  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order,
-     as expected by OpenGL for textures */
-  left_color = SDL_CreateRGBSurface( image_color->flags,
-                                     image_color->w, image_color->h,
-                                     image_color->format->BitsPerPixel,
-                                     image_color->format->Rmask,
-                                     image_color->format->Gmask,
-                                     image_color->format->Bmask,
-                                     image_color->format->Amask );
-
-  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order,
-     as expected by OpenGL for textures */
-  right_color = SDL_CreateRGBSurface( image_color->flags,
-                                      image_color->w, image_color->h,
-                                      image_color->format->BitsPerPixel,
-                                      image_color->format->Rmask,
-                                      image_color->format->Gmask,
-                                      image_color->format->Bmask,
-                                      image_color->format->Amask );
-
-  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order,
-        as expected by OpenGL for textures */
-  stereo_color = SDL_CreateRGBSurface( image_color->flags,
-                                       image->w, image->h,
-                                       image_color->format->BitsPerPixel,
-                                       image_color->format->Rmask,
-                                       image_color->format->Gmask,
-                                       image_color->format->Bmask,
-                                       image_color->format->Amask );
-  /* Initialise libVLC    */
-  libvlc = libvlc_new(vlc_argc, vlc_argv);
-  m = libvlc_media_new_path(libvlc, argv[1]);
-  mp = libvlc_media_player_new_from_media(m);
-  libvlc_media_release(m);
-
-  libvlc_video_set_callbacks(mp, lock, unlock, display, &ctx);
-  libvlc_video_set_format(mp, "RGBA", SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH*4);
-  libvlc_media_player_play(mp);
-
-  GLuint TextureID = 0;
-
-  /* Generate the openGL textures */
-  glEnable( GL_TEXTURE_2D );
-  glGenTextures(1, &TextureID);
-  glBindTexture(GL_TEXTURE_2D, TextureID);
-  int Mode = GL_RGB;
-
-  if(image->format->BytesPerPixel == 4) {
-    Mode = GL_RGBA;
-  }
-
-  int S = 20; //58;
-
-  /****** Main Loop ******/
-  while(quit == false)
-  {
-    SDL_LockMutex(ctx.mutex);
-    crop_surface( image, image_color, 0, 0, image->w/2, image->h);
-    crop_surface( image, image_depth, image->w/2, 0, image->w/2, image->h);
-    //FCI just have a copy to work with
-    crop_surface( image, image_depth2, image->w/2, 0, image->w/2, image->h);
-    SDL_UnlockMutex(ctx.mutex);
-
-    // Generate stereo image
-//FCI image_depth2
-    shift_surface(image_color, image_depth, image_depth2, left_color, right_color, S);
-    SDL_FillRect(stereo_color, NULL, 0x000000);
-    SDL_BlitSurface (left_color, NULL, stereo_color, NULL);
-
-    SDL_Rect dest;
-    dest.x = left_color->w;
-    dest.y = 0;
-    dest.w = right_color->w;
-    dest.h = right_color->h;
-    SDL_BlitSurface (right_color, NULL, stereo_color, &dest);
-
-    //Compose original and depth
-    SDL_BlitSurface (stereo_color, NULL, image_all, NULL);
-    dest.x = 0;
-    dest.y = stereo_color->h;
-    SDL_BlitSurface (image_color, NULL, image_all, &dest);
-    dest.x = image_color->w;
-    SDL_BlitSurface (image_depth2, NULL, image_all, &dest);
-
-    glTexImage2D( GL_TEXTURE_2D,
-                  0, Mode,
-                  stereo_color->w, stereo_color->h, 0,
-                  Mode, GL_UNSIGNED_BYTE, stereo_color->pixels);
-
-// used to test image_depth2 after filter FCI
-/*
-     glTexImage2D( GL_TEXTURE_2D,
-                  0,
-                  Mode,
-                  image_depth2->w, image_depth2->h,
-                  0,
-                  Mode,
-                  GL_UNSIGNED_BYTE,
-                  image_depth2->pixels); 
-*/
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    /****** Get Most Current Time ******/
-    var::frame_start_time = SDL_GetTicks();
-
-    /****** Draw Rectangle ******/
-    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-    // Bind the texture to which subsequent calls refer to
-    glBindTexture( GL_TEXTURE_2D, TextureID);
-      glBegin( GL_QUADS );
-      //Bottom-left vertex (corner)
-      glTexCoord2i( 0, 0 );
-      glVertex3f( 0.f, 0.f, 0.0f );
-      //Bottom-right vertex (corner)
-      glTexCoord2i( 1, 0 );
-      glVertex3f( SCREEN_WIDTH, 0.f, 0.f );
-      //Top-right vertex (corner)
-      glTexCoord2i( 1, 1 );
-      glVertex3f( SCREEN_WIDTH, SCREEN_HEIGHT, 0.f );
-      //Top-left vertex (corner)
-      glTexCoord2i( 0, 1 );
-      glVertex3f( 0.f, SCREEN_HEIGHT, 0.f );
-    glEnd();
-
-    /****** Check for Key & System input ******/
-    while(SDL_PollEvent(&event))
-    {
-      /******  Application Quit Event ******/
-      switch (event.type)
-      {
-        case SDL_KEYDOWN:
-          if(event.key.keysym.sym == 27)
-            quit = true;
-          else if(event.key.keysym.sym == '=')
-            S++;
-          else if(event.key.keysym.sym == '-')
-            S--;
-          else if(event.key.keysym.sym == 'h')
-          {
-            hole_filling = !hole_filling;
-            printf ("Hole filling: %d.\n", depth_filter);
-          }
-          else if(event.key.keysym.sym == 'f')
-          {
-            depth_filter = !depth_filter;     // filter toggle FCI****
-            printf ("Depth filter: %d.\n", depth_filter);
-          }
-          else if(event.key.keysym.sym == SDLK_SPACE)
-          {
-            paused = !paused;
-            libvlc_media_player_set_pause(mp, paused);
-          }
-          break;
-      }
-    }
-
-    /****** Update Screen And Frame Counts ******/
-    SDL_GL_SwapBuffers();
-    var::frame_count++;
-    var::frame_current_time = SDL_GetTicks();
-
-    /****** Frame Rate Handle ******/
-    if((var::frame_current_time - var::frame_start_time) < (1000/60))
-    {
-      var::frame_count = 0;
-      SDL_Delay((1000/60) - (var::frame_current_time - var::frame_start_time));
-    }
-  }
-  /*
-   * Stop stream and clean up libVLC
-   */
-  libvlc_media_player_stop(mp);
-  libvlc_media_player_release(mp);
-  libvlc_release(libvlc);
-
-  /*
-   * Close window and clean up libSDL
-   */
-  SDL_DestroyMutex(ctx.mutex);
-  SDL_FreeSurface(ctx.surf);
-  clean_up();
-
-  return 0;
-}
-
-SDL_Surface* crop_surface( SDL_Surface* orig,
-                           SDL_Surface* dest,
-                           int x, int y,
-                           unsigned int width, unsigned int height )
-{
-  SDL_Rect rect = {x, y, width, height};
-  SDL_BlitSurface(orig, &rect, dest, 0);
-  return dest;
-}
-//crop_surface twice would give image_depth2 FCI
-
-Uint32 getpixel(SDL_Surface *surface, int x, int y)
-{
-  int bpp = surface->format->BytesPerPixel;
-  /* Here p is the address to the pixel we want to retrieve */
-  Uint8 *p = (Uint8 *)surface->pixels + y * surface->pitch + x * bpp;
-
-  switch(bpp) {
-    case 1:
-      return *p;
-      break;
-
-    case 2:
-      return *(Uint16 *)p;
-      break;
-
-    case 3:
-      if(SDL_BYTEORDER == SDL_BIG_ENDIAN)
-        return p[0] << 16 | p[1] << 8 | p[2];
-      else
-        return p[0] | p[1] << 8 | p[2] << 16;
-      break;
-
-    case 4:
-      return *(Uint32 *)p;
-      break;
-
-    default:
-      return 0;       /* shouldn't happen, but avoids warnings */
-  }
-}
-
-void putpixel(SDL_Surface *surface, int x, int y, Uint32 pixel)
-{
-  int bpp = surface->format->BytesPerPixel;
-  /* Here p is the address to the pixel we want to set */
-  Uint8 *p = (Uint8 *)surface->pixels + y * surface->pitch + x * bpp;
-
-  switch(bpp) {
-    case 1:
-      *p = pixel;
-      break;
-
-    case 2:
-      *(Uint16 *)p = pixel;
-      break;
-
-    case 3:
-      if(SDL_BYTEORDER == SDL_BIG_ENDIAN)
-      {
-        p[0] = (pixel >> 16) & 0xff;
-        p[1] = (pixel >> 8) & 0xff;
-        p[2] = pixel & 0xff;
-      }
-      else
-      {
-        p[0] = pixel & 0xff;
-        p[1] = (pixel >> 8) & 0xff;
-        p[2] = (pixel >> 16) & 0xff;
-      }
-      break;
-
-    case 4:
-      *(Uint32 *)p = pixel;
-      break;
-  }
-}
-
-void get_YUV(Uint8 r, Uint8 g, Uint8 b, int &Y, int &U, int &V)
-{
-  Y = 0.299*r + 0.587*g + 0.114*b;
-  U = (b-Y)*0.565;
-  V = (r-Y)*0.713;
-} 
-
-// need to create get_RGB(oposite to get_YUV)  if going to put back in image_depth2 FCI****
-// need to store values of UV if goint to put pixel back 
-// get precise constants FCI***
-
-void get_RGB( int Y, int U, int V, Uint8 &r, Uint8 &g, Uint8 &b)
-{
-  r = 1.0*Y +     0*U + 1.140*V;
-  g = 1.0*Y - 0.395*U - 0.581*V;
-  b = 1.0*Y + 2.032*U +     0*V;
- }
-
-
-
-SDL_Surface *adaptive_filter_Park_et_al( SDL_Surface* image_depth,
-                                         SDL_Surface* image_depth2 )
-{
-  SDL_BlitSurface(image_depth, NULL, image_depth2, NULL);
+  SDL_BlitSurface(depth_frame, NULL, depth_frame_filtered, NULL);
   int max_t1 = 2, max_t2 = 2;
   // The first smoothing filter
-  
+
 }
 
-SDL_Surface* filter_depth( SDL_Surface* image_depth,
-                           SDL_Surface* image_depth2,
+SDL_Surface* filter_depth( SDL_Surface* depth_frame,
+                           SDL_Surface* depth_frame_filtered,
                            int x, int y,
                            unsigned int width, unsigned int height)
-
-
 {
   int cols = width;
   int rows = height;
- 
+
   int neighborX, neighborY;
   Uint8 r, g, b;
   Uint8 r_new, g_new, b_new;
   float r_sum, g_sum, b_sum;
-  // int Ybefore, Yafter, U, V; // test if Y changes with filter FCI
-   // not processing the edges
-  // not processing the edges
-  for (int y = gauss_kernel_size - 1 ; y < rows - gauss_kernel_size - 1; y++)
+
+  for (int y = GAUSSIAN_KERNEL_SIZE-1; y < rows - GAUSSIAN_KERNEL_SIZE-1; y++)
   {
-    for (int x = gauss_kernel_size - 1 ; x < cols - gauss_kernel_size - 1; x++)
-    {  
-     /* test of Y before and after FCI
-        Uint32 pixelt = getpixel(image_depth, x, y);
-        SDL_GetRGB (pixelt, image_depth->format, &r, &g, &b);
-        get_YUV(r, g, b, Ybefore, U, V);
-      */
+    for (int x = GAUSSIAN_KERNEL_SIZE-1; x < cols-GAUSSIAN_KERNEL_SIZE-1; x++)
+    {
       r_sum = 0;
       g_sum = 0;
       b_sum = 0;
 
-      for (int filterX = 0; filterX < gauss_kernel_size; filterX++)
+      for (int filterX = 0; filterX < GAUSSIAN_KERNEL_SIZE; filterX++)
       {
-        for (int filterY = 0; filterY < gauss_kernel_size; filterY++)
+        for (int filterY = 0; filterY < GAUSSIAN_KERNEL_SIZE; filterY++)
         {
           // get original depth around point being calculated
           neighborX = x - 1 + filterX;
           neighborY = y - 1 + filterY;
 
           // load neighbor
-          Uint32 pixel = getpixel(image_depth, neighborX, neighborY);
-          SDL_GetRGB (pixel, image_depth->format, &r, &g, &b);
+          Uint32 pixel = sdl_get_pixel(depth_frame, neighborX, neighborY);
+          SDL_GetRGB (pixel, depth_frame->format, &r, &g, &b);
 
           // multiply by kernel
           // will type casting work properly? FCI
-          r_sum += r * gauss_kernel[filterX][filterY];
-          g_sum += g * gauss_kernel[filterX][filterY];
-          b_sum += b * gauss_kernel[filterX][filterY];
+          r_sum += r * gaussian_kernel[filterX][filterY];
+          g_sum += g * gaussian_kernel[filterX][filterY];
+          b_sum += b * gaussian_kernel[filterX][filterY];
           // OK to apply Guassian filter to RGB values instead of Y value of YUV?
-          //testing Ybefore and Yafter suggests its ok
-        } 
-              
+          // testing Ybefore and Yafter suggests its ok
+        }
+
         // r_new = (Uint8) r_sum; g_new = (Uint8) g_sum; b_new = (Uint8) b_sum;
-        //chk valid range for result for result 
+        //chk valid range for result for result
         r_new = std::min(std::max(int( r_sum ), 0), 255); // not using bias or factor
         g_new = std::min(std::max(int( g_sum ), 0), 255);
         b_new = std::min(std::max(int( b_sum ), 0), 255);
@@ -679,17 +215,18 @@ SDL_Surface* filter_depth( SDL_Surface* image_depth,
              b_new = (Uint8) 255;
            };
          */
-         
-        // store result in original position in image_depth2
-        Uint32 pixel_new = SDL_MapRGB(image_depth2->format, r_new, g_new, b_new);
-        putpixel (image_depth2, x, y, pixel_new );
+
+        // store result in original position in depth_frame_filtered
+        Uint32 pixel_new = SDL_MapRGB( depth_frame_filtered->format,
+                                       r_new, g_new, b_new );
+        sdl_put_pixel (depth_frame_filtered, x, y, pixel_new );
       }
     }
   }
-  return image_depth2;
+  return depth_frame_filtered;
 }
 
-/* DIBR STARTS HERE */
+/****************** 3D Warping related functions ******************************/
 int find_shiftMC3(int depth, int Ny)
 {
   int h;
@@ -717,7 +254,6 @@ int find_shiftMC3(int depth, int Ny)
   // clear understanding of how the rendered views look like.
   // knear = 0 means everything is displayed behind the screen
   // which is practically not the case.
-  //
   // Interested user can remove this part to see what happens.
   knear = 0;
   A  = depth*(knear + kfar)/(n_depth-1);
@@ -734,12 +270,13 @@ int find_shiftMC3(int depth, int Ny)
   return h;
 }
 
-bool shift_surface ( SDL_Surface *image_color,
-                     SDL_Surface *image_depth,
-                     SDL_Surface *image_depth2,
+bool shift_surface ( user_params &p,
+                     SDL_Surface *image_color,
+                     SDL_Surface *depth_frame,
+                     SDL_Surface *depth_frame_filtered,
                      SDL_Surface *left_image,
                      SDL_Surface *right_image,
-                     int S)
+                     int S = 58)
 {
 
   SDL_FillRect(left_image, NULL, 0xFFFFFF);
@@ -758,14 +295,14 @@ bool shift_surface ( SDL_Surface *image_color,
   // Remove from here
   for(int i = 0; i < N; i++)
     depth_shift_table_lookup[i] = find_shiftMC3(i, N);
-  
+
   // enter filter here if necessary FCI***
-  if (depth_filter)
+  if (p.depth_filter)
   {
-    filter_depth( image_depth,
-                  image_depth2,
+    filter_depth( depth_frame,
+                  depth_frame_filtered,
                   cols, rows,
-                  image_depth->w, image_depth->h);
+                  depth_frame->w, depth_frame->h);
   };
   //FCI***
 
@@ -776,10 +313,10 @@ bool shift_surface ( SDL_Surface *image_color,
     for (int x = cols-1; x >= 0; --x)
     {
       // get depth
-      // image_depth2 after filter applied FCI
-      Uint32 pixel = getpixel(image_depth2, x, y);
+      // depth_frame_filtered after filter applied FCI
+      Uint32 pixel = sdl_get_pixel(depth_frame_filtered, x, y);
       Uint8 r, g, b;
-      SDL_GetRGB (pixel, image_depth2->format, &r, &g, &b);
+      SDL_GetRGB (pixel, depth_frame_filtered->format, &r, &g, &b);
       int Y, U, V;
       get_YUV(r, g, b, Y, U, V);
       int D = Y;
@@ -787,13 +324,14 @@ bool shift_surface ( SDL_Surface *image_color,
 
       if( x + S - shift < cols)
       {
-        putpixel (left_image, x + S-shift, y, getpixel (image_color, x, y) );
+        sdl_put_pixel( left_image, x + S-shift, y,
+                       sdl_get_pixel (image_color, x, y) );
         mask [y][x+S-shift] = 1;
       }
-      // putpixel (left_image, x, y, getpixel (image_color, x, y) );
+      // sdl_put_pixel (left_image, x, y, sdl_get_pixel (image_color, x, y) );
     }
 
-    if(hole_filling)
+    if(p.hole_filling)
     {
       for (int x = 1; x < cols; x++)
       {
@@ -801,14 +339,14 @@ bool shift_surface ( SDL_Surface *image_color,
         {
           if ( x - 7 < 0)
           {
-            putpixel (left_image, x, y, getpixel(image_color, x, y));
+            sdl_put_pixel (left_image, x, y, sdl_get_pixel(image_color, x, y));
           }
           else
           {
             Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
             for (int x1 = x-7; x1 <= x-4; x1++)
             {
-              Uint32 pixel = getpixel(left_image, x1, y);
+              Uint32 pixel = sdl_get_pixel(left_image, x1, y);
               Uint8 r, g, b;
               SDL_GetRGB (pixel, left_image->format, &r, &g, &b);
               r_sum += r;
@@ -820,8 +358,11 @@ bool shift_surface ( SDL_Surface *image_color,
             r_new = (Uint8)(r_sum / 4);
             g_new = (Uint8)(g_sum / 4);
             b_new = (Uint8)(b_sum / 4);
-            Uint32 pixel_new = SDL_MapRGB(left_image->format, r_new, g_new, b_new);
-            putpixel (left_image, x, y, pixel_new );
+            Uint32 pixel_new = SDL_MapRGB(left_image->format,
+                                          r_new,
+                                          g_new,
+                                          b_new);
+            sdl_put_pixel (left_image, x, y, pixel_new );
           }
         }
       }
@@ -835,10 +376,10 @@ bool shift_surface ( SDL_Surface *image_color,
     for (int x = 0; x < cols; x++)
     {
       // get depth
-      // image_depth2 after filter FCI
-      Uint32 pixel = getpixel(image_depth2, x, y);
+      // depth_frame_filtered after filter FCI
+      Uint32 pixel = sdl_get_pixel(depth_frame_filtered, x, y);
       Uint8 r, g, b;
-      SDL_GetRGB (pixel, image_depth2->format, &r, &g, &b);
+      SDL_GetRGB (pixel, depth_frame_filtered->format, &r, &g, &b);
       int Y, U, V;
       get_YUV(r, g, b, Y, U, V);
       int D = Y;
@@ -846,14 +387,15 @@ bool shift_surface ( SDL_Surface *image_color,
 
       if( x + shift - S >= 0 )
       {
-        putpixel (right_image, x + shift - S, y, getpixel (image_color, x, y) );
+        sdl_put_pixel ( right_image, x + shift - S, y,
+                        sdl_get_pixel (image_color, x, y) );
         mask [y][x+shift-S] = 1;
       }
 
-      // putpixel (left_image, x, y, getpixel (image_color, x, y) );
+      // sdl_put_pixel (left_image, x, y, sdl_get_pixel (image_color, x, y) );
     }
 
-    if(hole_filling)
+    if(p.hole_filling)
     {
       for (int x = cols-1 ; x >= 0; --x)
       {
@@ -861,14 +403,14 @@ bool shift_surface ( SDL_Surface *image_color,
         {
           if ( x + 7 > cols - 1)
           {
-            putpixel (right_image, x, y, getpixel(image_color, x, y));
+            sdl_put_pixel (right_image, x, y, sdl_get_pixel(image_color, x, y));
           }
           else
           {
             Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
             for (int x1 = x+4; x1 <= x+7; x1++)
             {
-              Uint32 pixel = getpixel(right_image, x1, y);
+              Uint32 pixel = sdl_get_pixel(right_image, x1, y);
               Uint8 r, g, b;
               SDL_GetRGB (pixel, right_image->format, &r, &g, &b);
               r_sum += r;
@@ -880,8 +422,11 @@ bool shift_surface ( SDL_Surface *image_color,
             r_new = (Uint8)(r_sum / 4);
             g_new = (Uint8)(g_sum / 4);
             b_new = (Uint8)(b_sum / 4);
-            Uint32 pixel_new = SDL_MapRGB(right_image->format, r_new, g_new, b_new);
-            putpixel (right_image, x, y, pixel_new );
+            Uint32 pixel_new = SDL_MapRGB(  right_image->format,
+                                            r_new,
+                                            g_new,
+                                            b_new );
+            sdl_put_pixel (right_image, x, y, pixel_new );
           }
         }
       }
@@ -891,3 +436,409 @@ bool shift_surface ( SDL_Surface *image_color,
   return true;
 }
 
+/********************* VLC related functions **********************************/
+struct vlc_sdl_ctx
+{
+  SDL_Surface *surf;
+  SDL_mutex *mutex;
+
+  libvlc_instance_t *libvlc;
+  libvlc_media_t *m;
+  libvlc_media_player_t *mp;
+
+  int frame_start_time;
+  int frame_current_time;
+  int frame_count ;
+};
+
+static void *lock(void *data, void **p_pixels)
+{
+  struct vlc_sdl_ctx *ctx = (struct vlc_sdl_ctx*)data;
+
+  SDL_LockMutex(ctx->mutex);
+  SDL_LockSurface(ctx->surf);
+  *p_pixels = ctx->surf->pixels;
+  return NULL; /* picture identifier, not needed here */
+}
+
+static void unlock(void *data, void *id, void *const *p_pixels)
+{
+  struct vlc_sdl_ctx *ctx = (struct vlc_sdl_ctx*)data;
+
+  SDL_UnlockSurface(ctx->surf);
+  SDL_UnlockMutex(ctx->mutex);
+
+  assert(id == NULL); /* picture identifier, not needed here */
+}
+
+static void display(void *data, void *id)
+{
+  /* VLC wants to display the video */
+  (void) data;
+  assert(id == NULL);
+}
+/* end libVLC */
+
+/*
+ * Initializes Core OpenGL Features.
+ */
+bool opengl_init(user_params &p)
+{
+  glEnable( GL_TEXTURE_2D );
+
+  glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+  glViewport( 0, 0, p.screen_width, p.screen_height);
+
+  glClear( GL_COLOR_BUFFER_BIT );
+
+  glMatrixMode( GL_PROJECTION );
+  glLoadIdentity();
+
+  glOrtho(0.0f, p.screen_width, p.screen_height, 0.0f, -1.0f, 1.0f);
+
+  glMatrixMode( GL_MODELVIEW );
+  glLoadIdentity();
+  return true;
+}
+
+/*
+ * Initializes SDL, OpenGL and video window.
+ */
+bool init(user_params &p, vlc_sdl_ctx &ctx)
+{
+  /* initialize SDL */
+  if( SDL_Init(SDL_INIT_EVERYTHING) < 0 )
+    return false;
+
+  if (SDL_SetVideoMode( p.screen_width,
+                        p.screen_height,
+                        p.screen_bpp,
+                        /*SDL_FULLSCREEN |*/ SDL_OPENGL) == NULL )
+    return false;
+
+  SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 ); // *new*
+
+  if( opengl_init(p) == false )
+    return false;
+
+  SDL_WM_SetCaption("DIBR player -- Guassian Filter", NULL);
+
+  /* ctx initialization */
+  ctx.mutex = SDL_CreateMutex();
+
+  /* Initialise libVLC    */
+  char const *vlc_argv[] =
+  {
+    "--no-audio", /* skip any audio track */
+    "--no-xlib"
+  };
+  int vlc_argc = sizeof(vlc_argv) / sizeof(*vlc_argv);
+  ctx.libvlc = libvlc_new(vlc_argc, vlc_argv);
+  printf ("%s\n", p.file_path);
+  ctx.m = libvlc_media_new_path(ctx.libvlc, p.file_path);
+  ctx.mp = libvlc_media_player_new_from_media(ctx.m);
+  libvlc_media_release(ctx.m);
+
+  libvlc_video_set_callbacks(ctx.mp, lock, unlock, display, &ctx);
+  libvlc_video_set_format( ctx.mp,
+                           "RGBA",
+                           p.screen_width,
+                           p.screen_height,
+                           p.screen_width*4 );
+
+  return true;
+}
+
+/* Removes objects before closes */
+void clean_up(vlc_sdl_ctx &ctx)
+{
+  /* Stop stream and clean up libVLC */
+  libvlc_media_player_stop(ctx.mp);
+  libvlc_media_player_release(ctx.mp);
+  libvlc_release(ctx.libvlc);
+
+  /* Close window and clean up libSDL */
+  SDL_DestroyMutex(ctx.mutex);
+  SDL_FreeSurface(ctx.surf);
+
+  /* Stop SDL */
+  SDL_Quit();
+}
+
+void set_default_params(user_params &p)
+{
+  p.screen_width = 1024;
+  p.screen_height = 768;
+  p.screen_bpp = 32;
+  p.fullscreen = false;
+
+  p.hole_filling = false;
+  p.paused = true;
+  p.depth_filter = true;
+
+  /* Gaussian filter parameters */
+  p.sigmax = 500.0;
+  p.sigmay = 10; /* assymetric gaussian filter */
+}
+
+int main(int argc, char* argv[])
+{
+  user_params p;
+  struct vlc_sdl_ctx ctx;
+
+  bool quit = false;
+  SDL_Event event;
+
+  Uint32 rmask, gmask, bmask, amask;
+
+  int S = 20; //58;
+
+  // Handling parameters
+  set_default_params(p);
+  //TODO: parse_opts(argc, argv);
+
+  if(argc < 2)
+  {
+      printf("Usage: %s <filename>\n", argv[0]);
+      return EXIT_FAILURE;
+  }
+
+  p.file_path = argv[1]; // path to video/image.
+
+  sdl_get_pixel_mask(rmask, gmask, bmask, amask);
+
+  if(init(p, ctx) == false)
+    return 1;
+
+  ctx.surf  = SDL_CreateRGBSurface( SDL_SWSURFACE,
+                                    p.screen_width,
+                                    p.screen_height,
+                                    32,
+                                    rmask,
+                                    gmask,
+                                    bmask,
+                                    0 );
+
+  SDL_Surface *image = ctx.surf;
+  SDL_Surface *image_all = SDL_CreateRGBSurface( image->flags,
+                                                 image->w, image->h*2,
+                                                 image->format->BitsPerPixel,
+                                                 image->format->Rmask,
+                                                 image->format->Gmask,
+                                                 image->format->Bmask,
+                                                 image->format->Amask );
+
+  SDL_Surface *image_color = SDL_CreateRGBSurface( image->flags,
+                                                   image->w/2, image->h,
+                                                   image->format->BitsPerPixel,
+                                                   image->format->Rmask,
+                                                   image->format->Gmask,
+                                                   image->format->Bmask,
+                                                   image->format->Amask );
+  sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h );
+
+  SDL_Surface *depth_frame = SDL_CreateRGBSurface( image->flags,
+                                                   image->w/2, image->h,
+                                                   image->format->BitsPerPixel,
+                                                   image->format->Rmask,
+                                                   image->format->Gmask,
+                                                   image->format->Bmask,
+                                                   image->format->Amask );
+  sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h);
+
+// FCI
+  SDL_Surface *depth_frame_filtered = SDL_CreateRGBSurface( image->flags,
+                                                    image->w/2, image->h,
+                                                    image->format->BitsPerPixel,
+                                                    image->format->Rmask,
+                                                    image->format->Gmask,
+                                                    image->format->Bmask,
+                                                    image->format->Amask );
+  sdl_crop_surface( image, depth_frame_filtered, image->w/2, 0, image->w/2, image->h);
+
+
+  // Apply filter to depth_frame after crop FCI
+  SDL_Surface *left_color, *right_color, *stereo_color;
+
+  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
+   * expected by OpenGL for textures */
+  left_color = SDL_CreateRGBSurface( image_color->flags,
+                                     image_color->w, image_color->h,
+                                     image_color->format->BitsPerPixel,
+                                     image_color->format->Rmask,
+                                     image_color->format->Gmask,
+                                     image_color->format->Bmask,
+                                     image_color->format->Amask );
+
+  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
+   * expected by OpenGL for textures */
+  right_color = SDL_CreateRGBSurface( image_color->flags,
+                                      image_color->w, image_color->h,
+                                      image_color->format->BitsPerPixel,
+                                      image_color->format->Rmask,
+                                      image_color->format->Gmask,
+                                      image_color->format->Bmask,
+                                      image_color->format->Amask );
+
+  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
+   * expected by OpenGL for textures */
+  stereo_color = SDL_CreateRGBSurface( image_color->flags,
+                                       image->w, image->h,
+                                       image_color->format->BitsPerPixel,
+                                       image_color->format->Rmask,
+                                       image_color->format->Gmask,
+                                       image_color->format->Bmask,
+                                       image_color->format->Amask );
+
+  GLuint TextureID = 0;
+
+  /* Generate the openGL textures */
+  glEnable( GL_TEXTURE_2D );
+  glGenTextures(1, &TextureID);
+  glBindTexture(GL_TEXTURE_2D, TextureID);
+  int Mode = GL_RGB;
+
+  if(image->format->BytesPerPixel == 4)
+    Mode = GL_RGBA;
+
+  calc_gaussian_kernel(p.sigmax, p.sigmay);
+
+  libvlc_media_player_play(ctx.mp);
+  ctx.frame_count = 0;
+
+  /****** Main Loop ******/
+  while(quit == false)
+  {
+    SDL_LockMutex(ctx.mutex);
+    sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h);
+    sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h);
+
+    //FCI just have a copy to work with
+    sdl_crop_surface( image,
+                      depth_frame_filtered,
+                      image->w/2,
+                      0,
+                      image->w/2,
+                      image->h );
+    SDL_UnlockMutex(ctx.mutex);
+
+    // Generate stereo image
+    // FCI depth_frame_filtered
+    shift_surface( p,
+                   image_color,
+                   depth_frame,
+                   depth_frame_filtered,
+                   left_color,
+                   right_color,
+                   S);
+
+    SDL_FillRect(stereo_color, NULL, 0x000000);
+    SDL_BlitSurface (left_color, NULL, stereo_color, NULL);
+
+    SDL_Rect dest;
+    dest.x = left_color->w;
+    dest.y = 0;
+    dest.w = right_color->w;
+    dest.h = right_color->h;
+    SDL_BlitSurface (right_color, NULL, stereo_color, &dest);
+
+    //Compose original and depth
+    SDL_BlitSurface (stereo_color, NULL, image_all, NULL);
+    dest.x = 0;
+    dest.y = stereo_color->h;
+    SDL_BlitSurface (image_color, NULL, image_all, &dest);
+    dest.x = image_color->w;
+    SDL_BlitSurface (depth_frame_filtered, NULL, image_all, &dest);
+
+    glTexImage2D( GL_TEXTURE_2D,
+                  0, Mode,
+                  image_all->w, image_all->h, 0,
+                  Mode, GL_UNSIGNED_BYTE, image_all->pixels);
+
+    // used to test depth_frame_filtered after filter FCI
+    /*
+     glTexImage2D( GL_TEXTURE_2D,
+                  0,
+                  Mode,
+                  depth_frame_filtered->w, depth_frame_filtered->h,
+                  0,
+                  Mode,
+                  GL_UNSIGNED_BYTE,
+                  depth_frame_filtered->pixels);
+    */
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    /****** Get Most Current Time ******/
+    ctx.frame_start_time = SDL_GetTicks();
+
+    /****** Draw Rectangle ******/
+    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+    // Bind the texture to which subsequent calls refer to
+    glBindTexture( GL_TEXTURE_2D, TextureID);
+      glBegin( GL_QUADS );
+      //Bottom-left vertex (corner)
+      glTexCoord2i( 0, 0 );
+      glVertex3f( 0.f, 0.f, 0.0f );
+      //Bottom-right vertex (corner)
+      glTexCoord2i( 1, 0 );
+      glVertex3f( p.screen_width, 0.f, 0.f );
+      //Top-right vertex (corner)
+      glTexCoord2i( 1, 1 );
+      glVertex3f( p.screen_width, p.screen_height, 0.f );
+      //Top-left vertex (corner)
+      glTexCoord2i( 0, 1 );
+      glVertex3f( 0.f, p.screen_height, 0.f );
+    glEnd();
+
+    /****** Check for Key & System input ******/
+    while(SDL_PollEvent(&event))
+    {
+      /******  Application Quit Event ******/
+      switch (event.type)
+      {
+        case SDL_KEYDOWN:
+          if(event.key.keysym.sym == 27)
+            quit = true;
+          else if(event.key.keysym.sym == '=')
+            S++;
+          else if(event.key.keysym.sym == '-')
+            S--;
+          else if(event.key.keysym.sym == 'h')
+          {
+            p.hole_filling = !p.hole_filling;
+            printf ("Hole filling: %d.\n", p.hole_filling);
+          }
+          else if(event.key.keysym.sym == 'f')
+          {
+            p.depth_filter = !p.depth_filter;     // filter toggle FCI****
+            printf ("Depth filter: %d.\n", p.depth_filter);
+          }
+          else if(event.key.keysym.sym == SDLK_SPACE)
+          {
+            p.paused = !p.paused;
+            libvlc_media_player_set_pause(ctx.mp, p.paused);
+          }
+          break;
+      }
+    }
+
+    /****** Update Screen And Frame Counts ******/
+    SDL_GL_SwapBuffers();
+    ctx.frame_count++;
+    ctx.frame_current_time = SDL_GetTicks();
+
+    /****** Frame Rate Handle ******/
+    if((ctx.frame_current_time - ctx.frame_start_time) < (1000/60))
+    {
+      ctx.frame_count = 0;
+      SDL_Delay((1000/60) - (ctx.frame_current_time - ctx.frame_start_time));
+    }
+  }
+
+  // Clean up everything
+  clean_up(ctx);
+
+  return 0;
+}
