@@ -73,6 +73,7 @@ struct user_params
   bool hole_filling;
   bool paused;
   bool depth_filter;
+  bool show_all;
 
   /* Gaussian filter parameters */
   double sigmax;
@@ -92,32 +93,6 @@ double oriented_gaussian (int x, int y,
 {
   return exp ( - ((x)*(x))/(2.0*sigma1) - ((y)*(y))/(2.0*sigma2));
 }
-
-/*
-vector < vector <double> > produce2dGaussianKernel ( int kernelRadius,
-                                                     double sigmaX,
-                                                     double sigmaY )
-{
-  // get kernel matrix
-  vector < vector <double> > kernel2d ( 2*kernelRadius + 1,
-                                        vector <double> (2*kernelRadius+1));
-  //fill values
-  double sum = 0;
-  for (int row = 0; row < kernel2d.size(); row++)
-    for (int col = 0; col <kernel2d[row].size(); col++)
-    {
-      kernel2d[row][col] = gaussian (row, kernelRadius, sigmaX) *
-                           gaussian (row, kernelRadius, sigmaY);
-
-      sum += kernel2d[row][col];
-    }
-
-  //normallize
-  for (int row = 0; row < kernel2d.size; row++)
-    for (int col = 0; colr < kernel2d[row].size(); col++)
-      kernel2d[row][col] /= sum;
-}
-*/
 
 void calc_gaussian_kernel(double sigmax, double sigmay)
 {
@@ -141,15 +116,6 @@ void calc_gaussian_kernel(double sigmax, double sigmay)
   for (int x = 0; x < GAUSSIAN_KERNEL_SIZE; x++)
     for (int y = 0; y < GAUSSIAN_KERNEL_SIZE; y++)
       gaussian_kernel[x][y] /= sum;
-}
-
-SDL_Surface *adaptive_filter_Park_et_al( SDL_Surface* depth_frame,
-                                         SDL_Surface* depth_frame_filtered )
-{
-  SDL_BlitSurface(depth_frame, NULL, depth_frame_filtered, NULL);
-  int max_t1 = 2, max_t2 = 2;
-  // The first smoothing filter
-
 }
 
 SDL_Surface* filter_depth( SDL_Surface* depth_frame,
@@ -506,6 +472,8 @@ bool opengl_init(user_params &p)
  */
 bool init(user_params &p, vlc_sdl_ctx &ctx)
 {
+  Uint32 rmask, gmask, bmask, amask;
+
   /* initialize SDL */
   if( SDL_Init(SDL_INIT_EVERYTHING) < 0 )
     return false;
@@ -525,6 +493,16 @@ bool init(user_params &p, vlc_sdl_ctx &ctx)
 
   /* ctx initialization */
   ctx.mutex = SDL_CreateMutex();
+
+  sdl_get_pixel_mask(rmask, gmask, bmask, amask);
+  ctx.surf  = SDL_CreateRGBSurface( SDL_SWSURFACE,
+                                    p.screen_width,
+                                    p.screen_height,
+                                    32,
+                                    rmask,
+                                    gmask,
+                                    bmask,
+                                    0 );
 
   /* Initialise libVLC    */
   char const *vlc_argv[] =
@@ -575,6 +553,7 @@ void set_default_params(user_params &p)
   p.hole_filling = false;
   p.paused = true;
   p.depth_filter = true;
+  p.show_all = false;
 
   /* Gaussian filter parameters */
   p.sigmax = 500.0;
@@ -588,8 +567,6 @@ int main(int argc, char* argv[])
 
   bool quit = false;
   SDL_Event event;
-
-  Uint32 rmask, gmask, bmask, amask;
 
   int S = 20; //58;
 
@@ -605,99 +582,34 @@ int main(int argc, char* argv[])
 
   p.file_path = argv[1]; // path to video/image.
 
-  sdl_get_pixel_mask(rmask, gmask, bmask, amask);
-
   if(init(p, ctx) == false)
     return 1;
 
-  ctx.surf  = SDL_CreateRGBSurface( SDL_SWSURFACE,
-                                    p.screen_width,
-                                    p.screen_height,
-                                    32,
-                                    rmask,
-                                    gmask,
-                                    bmask,
-                                    0 );
-
   SDL_Surface *image = ctx.surf;
-  SDL_Surface *image_all = SDL_CreateRGBSurface( image->flags,
-                                                 image->w, image->h*2,
-                                                 image->format->BitsPerPixel,
-                                                 image->format->Rmask,
-                                                 image->format->Gmask,
-                                                 image->format->Bmask,
-                                                 image->format->Amask );
-
-  SDL_Surface *image_color = SDL_CreateRGBSurface( image->flags,
-                                                   image->w/2, image->h,
-                                                   image->format->BitsPerPixel,
-                                                   image->format->Rmask,
-                                                   image->format->Gmask,
-                                                   image->format->Bmask,
-                                                   image->format->Amask );
+  SDL_Surface *image_all = sdl_create_RGB_surface(image, image->w, image->h*2 );
+  SDL_Surface *image_color = sdl_create_RGB_surface(image, image->w/2, image->h);
   sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h );
 
-  SDL_Surface *depth_frame = SDL_CreateRGBSurface( image->flags,
-                                                   image->w/2, image->h,
-                                                   image->format->BitsPerPixel,
-                                                   image->format->Rmask,
-                                                   image->format->Gmask,
-                                                   image->format->Bmask,
-                                                   image->format->Amask );
+  SDL_Surface *depth_frame = sdl_create_RGB_surface(image, image->w/2, image->h);
   sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h);
 
-// FCI
-  SDL_Surface *depth_frame_filtered = SDL_CreateRGBSurface( image->flags,
-                                                    image->w/2, image->h,
-                                                    image->format->BitsPerPixel,
-                                                    image->format->Rmask,
-                                                    image->format->Gmask,
-                                                    image->format->Bmask,
-                                                    image->format->Amask );
+  SDL_Surface *depth_frame_filtered = sdl_create_RGB_surface( image, image->w/2, image->h);
   sdl_crop_surface( image, depth_frame_filtered, image->w/2, 0, image->w/2, image->h);
 
 
-  // Apply filter to depth_frame after crop FCI
-  SDL_Surface *left_color, *right_color, *stereo_color;
-
   /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
    * expected by OpenGL for textures */
-  left_color = SDL_CreateRGBSurface( image_color->flags,
-                                     image_color->w, image_color->h,
-                                     image_color->format->BitsPerPixel,
-                                     image_color->format->Rmask,
-                                     image_color->format->Gmask,
-                                     image_color->format->Bmask,
-                                     image_color->format->Amask );
-
-  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
-   * expected by OpenGL for textures */
-  right_color = SDL_CreateRGBSurface( image_color->flags,
-                                      image_color->w, image_color->h,
-                                      image_color->format->BitsPerPixel,
-                                      image_color->format->Rmask,
-                                      image_color->format->Gmask,
-                                      image_color->format->Bmask,
-                                      image_color->format->Amask );
-
-  /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
-   * expected by OpenGL for textures */
-  stereo_color = SDL_CreateRGBSurface( image_color->flags,
-                                       image->w, image->h,
-                                       image_color->format->BitsPerPixel,
-                                       image_color->format->Rmask,
-                                       image_color->format->Gmask,
-                                       image_color->format->Bmask,
-                                       image_color->format->Amask );
+  SDL_Surface *left_color = sdl_create_RGB_surface(image_color, image_color->w, image_color->h);
+  SDL_Surface *right_color = sdl_create_RGB_surface( image_color, image_color->w, image_color->h);
+  SDL_Surface *stereo_color = sdl_create_RGB_surface( image_color, image->w, image->h);
 
   GLuint TextureID = 0;
-
   /* Generate the openGL textures */
   glEnable( GL_TEXTURE_2D );
   glGenTextures(1, &TextureID);
   glBindTexture(GL_TEXTURE_2D, TextureID);
-  int Mode = GL_RGB;
 
+  int Mode = GL_RGB;
   if(image->format->BytesPerPixel == 4)
     Mode = GL_RGBA;
 
@@ -750,22 +662,14 @@ int main(int argc, char* argv[])
     dest.x = image_color->w;
     SDL_BlitSurface (depth_frame_filtered, NULL, image_all, &dest);
 
+    SDL_Surface *surface_to_display = stereo_color;
+    if (p.show_all)
+      surface_to_display = image_all;
+
     glTexImage2D( GL_TEXTURE_2D,
                   0, Mode,
-                  image_all->w, image_all->h, 0,
-                  Mode, GL_UNSIGNED_BYTE, image_all->pixels);
-
-    // used to test depth_frame_filtered after filter FCI
-    /*
-     glTexImage2D( GL_TEXTURE_2D,
-                  0,
-                  Mode,
-                  depth_frame_filtered->w, depth_frame_filtered->h,
-                  0,
-                  Mode,
-                  GL_UNSIGNED_BYTE,
-                  depth_frame_filtered->pixels);
-    */
+                  surface_to_display->w, surface_to_display->h, 0,
+                  Mode, GL_UNSIGNED_BYTE, surface_to_display->pixels);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -819,6 +723,11 @@ int main(int argc, char* argv[])
           {
             p.paused = !p.paused;
             libvlc_media_player_set_pause(ctx.mp, p.paused);
+          }
+          else if(event.key.keysym.sym == 'a')
+          {
+            p.show_all = !p.show_all;
+            printf ("Show reference frames: %d.\n", p.show_all);
           }
           break;
       }

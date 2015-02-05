@@ -137,3 +137,18 @@ void sdl_put_pixel(SDL_Surface *surface, int x, int y, Uint32 pixel)
   }
 }
 
+/*
+ * Creates an RGB surface using the same parameters as surf. Width and height,
+ * however, can be different.
+ */
+SDL_Surface *sdl_create_RGB_surface(SDL_Surface *surf, int w, int h)
+{
+  return SDL_CreateRGBSurface( surf->flags, w, h,
+                               surf->format->BitsPerPixel,
+                               surf->format->Rmask,
+                               surf->format->Gmask,
+                               surf->format->Bmask,
+                               surf->format->Amask );
+
+}
+

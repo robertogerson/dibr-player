@@ -1,7 +1,7 @@
 New features
 ============
-  * Add parameter to show/hide reference view and depth.
   * Add parameter to show filtered depth.
+  * Advanced depth-filtering approaches: Adaptive filters, etc.
   * Improved hole-filling techniques.
   * Support for YUV files.
   * Add keyboard shortcut (or command-line option) to change output format.
