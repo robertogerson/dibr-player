@@ -52,7 +52,6 @@
 
 #include <vlc/vlc.h>
 
-#include "options.h"
 #include "sdl_aux.h"
 
 #define PI 3.141592653589793

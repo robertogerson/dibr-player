@@ -13,6 +13,8 @@
  * You should have received a copy of the GNU General Public License
  * along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
  */
+#ifndef __SDL_AUX_H__
+#define __SDL_AUX_H__
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -151,4 +153,4 @@ SDL_Surface *sdl_create_RGB_surface(SDL_Surface *surf, int w, int h)
                                surf->format->Amask );
 
 }
-
+#endif
