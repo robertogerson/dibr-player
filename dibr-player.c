@@ -147,12 +147,10 @@ SDL_Surface* filter_depth( SDL_Surface* depth_frame,
           neighborX = x - 1 + filterX;
           neighborY = y - 1 + filterY;
 
-          // load neighbor
+          // get neighbor pixels
           Uint32 pixel = sdl_get_pixel(depth_frame, neighborX, neighborY);
           SDL_GetRGB (pixel, depth_frame->format, &r, &g, &b);
 
-          // multiply by kernel
-          // will type casting work properly? FCI
           r_sum += r * gaussian_kernel[filterX][filterY];
           g_sum += g * gaussian_kernel[filterX][filterY];
           b_sum += b * gaussian_kernel[filterX][filterY];
@@ -160,27 +158,9 @@ SDL_Surface* filter_depth( SDL_Surface* depth_frame,
           // testing Ybefore and Yafter suggests its ok
         }
 
-        // r_new = (Uint8) r_sum; g_new = (Uint8) g_sum; b_new = (Uint8) b_sum;
-        //chk valid range for result for result
         r_new = std::min(std::max(int( r_sum ), 0), 255); // not using bias or factor
         g_new = std::min(std::max(int( g_sum ), 0), 255);
         b_new = std::min(std::max(int( b_sum ), 0), 255);
-        /* test Y before and after FCI
-           r = r_new; g = g_new; b = b_new;
-           get_YUV(r, g, b, Yafter, U, V);
-           if (abs (Ybefore - Yafter) < 2)
-           {
-             r_new = (Uint8) 0;
-             g_new = (Uint8) 0;
-             b_new = (Uint8) 0;
-           }
-           else
-           {
-             r_new = (Uint8) 255;
-             g_new = (Uint8) 255;
-             b_new = (Uint8) 255;
-           };
-         */
 
         // store result in original position in depth_frame_filtered
         Uint32 pixel_new = SDL_MapRGB( depth_frame_filtered->format,
@@ -252,17 +232,15 @@ bool shift_surface ( user_params &p,
   // Maximun shift comes at depth == 0
   int N = 256; // Number of depth-planes
   // int S = 58;
-  int depth = 0;
   int depth_shift_table_lookup[N];
   int cols = image_color->w, rows = image_color->h;
   bool mask [rows][cols];
   memset (mask, false, rows*cols*sizeof(bool));
 
-  // Remove from here
+  // \fixme remove from here
   for(int i = 0; i < N; i++)
     depth_shift_table_lookup[i] = find_shiftMC3(i, N);
 
-  // enter filter here if necessary FCI***
   if (p.depth_filter)
   {
     filter_depth( depth_frame,
@@ -270,10 +248,8 @@ bool shift_surface ( user_params &p,
                   cols, rows,
                   depth_frame->w, depth_frame->h);
   };
-  //FCI***
 
   // Calculate left image
-  // for every pixel change its value
   for (int y = 0; y < rows; y++)
   {
     for (int x = cols-1; x >= 0; --x)
@@ -294,7 +270,6 @@ bool shift_surface ( user_params &p,
                        sdl_get_pixel (image_color, x, y) );
         mask [y][x+S-shift] = 1;
       }
-      // sdl_put_pixel (left_image, x, y, sdl_get_pixel (image_color, x, y) );
     }
 
     if(p.hole_filling)
@@ -357,8 +332,6 @@ bool shift_surface ( user_params &p,
                         sdl_get_pixel (image_color, x, y) );
         mask [y][x+shift-S] = 1;
       }
-
-      // sdl_put_pixel (left_image, x, y, sdl_get_pixel (image_color, x, y) );
     }
 
     if(p.hole_filling)
@@ -636,13 +609,11 @@ int main(int argc, char* argv[])
 
     // Generate stereo image
     // FCI depth_frame_filtered
-    shift_surface( p,
-                   image_color,
-                   depth_frame,
+    shift_surface( p, image_color, depth_frame,
                    depth_frame_filtered,
                    left_color,
                    right_color,
-                   S);
+                   S );
 
     SDL_FillRect(stereo_color, NULL, 0x000000);
     SDL_BlitSurface (left_color, NULL, stereo_color, NULL);
