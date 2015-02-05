@@ -33,6 +33,7 @@ Keyboard shortcuts
 ==================
   - h   - enable/disable hole filling.
   - f   - enable/disable depth filtering.
+  - a   - enable/disable show reference frames.
   - j   - increase the baseline distance between left and right eyes.
   - k   - decrease the baseline distance between left and right eyes.
   - ESC - close the program.
