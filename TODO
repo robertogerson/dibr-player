@@ -3,4 +3,6 @@ New features
   * Improved hole-filling techniques.
   * Support for YUV files.
   * Add keyboard shortcut (or command-line option) to change output format.
+  * Generate N images from minimum to maximum disparity (it can be useful for 
+    multi-view and 'GIF-like' animation).
 
