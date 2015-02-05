@@ -1,3 +1,19 @@
+/* This file is part of dibr-player.
+ *
+ * dibr-player is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * dibr-player is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License
+ * along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +26,8 @@
 
 #include <vlc/vlc.h>
 
+#define PI 3.141592653589793
+
 const int SCREEN_WIDTH = 1024;
 const int SCREEN_HEIGHT = 768;
 const int SCREEN_BPP = 32;
@@ -17,10 +35,9 @@ bool fullscreen = false;
 bool hole_filling = false;
 bool paused = true;
 
-// FCI
-#define PI 3.141592653589793
 bool depth_filter = true; 
 #define gauss_kernel_size 9
+
 double sigmax = 500.0, sigmay = 10;  // assymetric gaussian filter
 double gauss_kernel [gauss_kernel_size][gauss_kernel_size];
 
@@ -68,20 +85,20 @@ void calculate_gauss_kernel()
       int x1 = x - gauss_kernel_size/2;
       int y1 = y - gauss_kernel_size/2;
       gauss_kernel[x][y] = oriented_gaussian(x1, y1, sigmax, sigmay);
-      printf ("(%d, %d) ", x1, y1);
-//      gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
-//      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
-//                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp ( -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 * pow (sigmay, 2)));
-      printf ("%.5f ", gauss_kernel[x][y]);
+      /* gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
+      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
+                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp (
+                            -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 *
+                            pow (sigmay, 2))); */
       sum += gauss_kernel[x][y]; 
     }
-    printf ("\n");
   }
 
   for (int x = 0; x < gauss_kernel_size; x++)
     for (int y = 0; y < gauss_kernel_size; y++)
       gauss_kernel[x][y] /= sum;
 }
+
 //FCI
 SDL_Event event;
 #define  RADDEG  57.29577951f
@@ -253,7 +270,7 @@ int main(int argc, char* argv[])
                                    rmask,
                                    gmask,
                                    bmask,
-                                   0);
+                                   0 );
 
   SDL_Surface *image = ctx.surf;
   SDL_Surface *image_all = SDL_CreateRGBSurface( image->flags,
@@ -297,7 +314,6 @@ int main(int argc, char* argv[])
 
   SDL_Surface *left_color, *right_color, *stereo_color;
 
-  printf("%d\n", image_color->format->BitsPerPixel);
   /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order,
      as expected by OpenGL for textures */
   left_color = SDL_CreateRGBSurface( image_color->flags,
@@ -327,9 +343,7 @@ int main(int argc, char* argv[])
                                        image_color->format->Gmask,
                                        image_color->format->Bmask,
                                        image_color->format->Amask );
-  /*
-   * Initialise libVLC
-   */
+  /* Initialise libVLC    */
   libvlc = libvlc_new(vlc_argc, vlc_argv);
   m = libvlc_media_new_path(libvlc, argv[1]);
   mp = libvlc_media_player_new_from_media(m);
@@ -341,7 +355,7 @@ int main(int argc, char* argv[])
 
   GLuint TextureID = 0;
 
-  // Generate the openGL textures
+  /* Generate the openGL textures */
   glEnable( GL_TEXTURE_2D );
   glGenTextures(1, &TextureID);
   glBindTexture(GL_TEXTURE_2D, TextureID);
@@ -744,10 +758,8 @@ bool shift_surface ( SDL_Surface *image_color,
 
   // Remove from here
   for(int i = 0; i < N; i++)
-  {
     depth_shift_table_lookup[i] = find_shiftMC3(i, N);
-    printf ("%d ", depth_shift_table_lookup[i]);
-  }
+  
   // enter filter here if necessary FCI***
   if (depth_filter)
   {
