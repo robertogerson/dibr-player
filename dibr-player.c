@@ -103,11 +103,6 @@ void calc_gaussian_kernel(double sigmax, double sigmay)
       int x1 = x - GAUSSIAN_KERNEL_SIZE/2;
       int y1 = y - GAUSSIAN_KERNEL_SIZE/2;
       gaussian_kernel[x][y] = oriented_gaussian(x1, y1, sigmax, sigmay);
-      /* gauss_kernel[x][y] = (1.0/(2.0*PI*sigmax*sigmax))* exp (-1.0*(x1*x1+y1*y1)/(2.0*sigmax*sigmax));
-      gauss_kernel[x][y] =  (1.0 / (2 * sqrt(2 * PI * sigmax) ) ) * exp ( -1.0 * pow (x - gauss_kernel_size/2, 2) / (2 * pow (sigmax, 2))) *
-                            (1.0 / (2 * sqrt(2 * PI * sigmay) ) ) * exp (
-                            -1.0 * pow (y - gauss_kernel_size/2, 2) / (2 *
-                            pow (sigmay, 2))); */
       sum += gaussian_kernel[x][y];
     }
   }
@@ -721,3 +716,4 @@ int main(int argc, char* argv[])
 
   return 0;
 }
+
