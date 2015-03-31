@@ -14,7 +14,7 @@
  * along with Foobar.  If not, see <http://www.gnu.org/licenses/>.
  */
 /*************** DIBR Overview *************************************************
- * Depth-image-based rendering is the process of genereting virtual views from
+ * Depth-image-based rendering is the process of generating virtual views from
  * a set of original view and associated depth frame. In special, this project
  * is intended to generate a stereo-pair from a reference texture. The following
  * 'image' shows schematically the process.
@@ -50,7 +50,11 @@
 #include "SDL/SDL_opengl.h"
 #include "SDL/SDL_image.h"
 
+#define USE_LIBVLC 1
+
+#ifdef USE_LIBVLC
 #include <vlc/vlc.h>
+#endif
 
 #include "sdl_aux.h"
 
@@ -375,15 +379,18 @@ struct vlc_sdl_ctx
   SDL_Surface *surf;
   SDL_mutex *mutex;
 
+#ifdef USE_LIBVLC
   libvlc_instance_t *libvlc;
   libvlc_media_t *m;
   libvlc_media_player_t *mp;
+#endif
 
   int frame_start_time;
   int frame_current_time;
   int frame_count ;
 };
 
+#ifdef USE_LIBVLC
 static void *lock(void *data, void **p_pixels)
 {
   struct vlc_sdl_ctx *ctx = (struct vlc_sdl_ctx*)data;
@@ -391,6 +398,7 @@ static void *lock(void *data, void **p_pixels)
   SDL_LockMutex(ctx->mutex);
   SDL_LockSurface(ctx->surf);
   *p_pixels = ctx->surf->pixels;
+
   return NULL; /* picture identifier, not needed here */
 }
 
@@ -410,9 +418,11 @@ static void display(void *data, void *id)
   (void) data;
   assert(id == NULL);
 }
+#endif
 /* end libVLC */
 
-/*
+/******************** OpenGL related functions ********************************/
+/**
  * Initializes Core OpenGL Features.
  */
 bool opengl_init(user_params &p)
@@ -471,7 +481,8 @@ bool init(user_params &p, vlc_sdl_ctx &ctx)
                                     bmask,
                                     0 );
 
-  /* Initialise libVLC    */
+#ifdef USE_LIBVLC
+  /* Initialize libVLC    */
   char const *vlc_argv[] =
   {
     "--no-audio", /* skip any audio track */
@@ -490,6 +501,7 @@ bool init(user_params &p, vlc_sdl_ctx &ctx)
                            p.screen_width,
                            p.screen_height,
                            p.screen_width*4 );
+#endif
 
   return true;
 }
@@ -497,10 +509,12 @@ bool init(user_params &p, vlc_sdl_ctx &ctx)
 /* Removes objects before closes */
 void clean_up(vlc_sdl_ctx &ctx)
 {
+#ifdef USE_LIBVLC
   /* Stop stream and clean up libVLC */
   libvlc_media_player_stop(ctx.mp);
   libvlc_media_player_release(ctx.mp);
   libvlc_release(ctx.libvlc);
+#endif
 
   /* Close window and clean up libSDL */
   SDL_DestroyMutex(ctx.mutex);
@@ -552,7 +566,12 @@ int main(int argc, char* argv[])
   if(init(p, ctx) == false)
     return 1;
 
+#ifdef USE_LIBVLC
   SDL_Surface *image = ctx.surf;
+#else
+  SDL_Surface *image = IMG_Load(p.file_path);
+#endif
+
   SDL_Surface *image_all = sdl_create_RGB_surface(image, image->w, image->h*2 );
   SDL_Surface *image_color = sdl_create_RGB_surface(image, image->w/2, image->h);
   sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h );
@@ -562,7 +581,6 @@ int main(int argc, char* argv[])
 
   SDL_Surface *depth_frame_filtered = sdl_create_RGB_surface( image, image->w/2, image->h);
   sdl_crop_surface( image, depth_frame_filtered, image->w/2, 0, image->w/2, image->h);
-
 
   /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
    * expected by OpenGL for textures */
@@ -582,7 +600,9 @@ int main(int argc, char* argv[])
 
   calc_gaussian_kernel(p.sigmax, p.sigmay);
 
+#ifdef USE_LIBVLC
   libvlc_media_player_play(ctx.mp);
+#endif
   ctx.frame_count = 0;
 
   /****** Main Loop ******/
@@ -619,7 +639,7 @@ int main(int argc, char* argv[])
     dest.h = right_color->h;
     SDL_BlitSurface (right_color, NULL, stereo_color, &dest);
 
-    //Compose original and depth
+    // Compose original and depth
     SDL_BlitSurface (stereo_color, NULL, image_all, NULL);
     dest.x = 0;
     dest.y = stereo_color->h;
@@ -687,7 +707,9 @@ int main(int argc, char* argv[])
           else if(event.key.keysym.sym == SDLK_SPACE)
           {
             p.paused = !p.paused;
+#ifdef USE_LIBVLC
             libvlc_media_player_set_pause(ctx.mp, p.paused);
+#endif
           }
           else if(event.key.keysym.sym == 'a')
           {
