@@ -19,7 +19,9 @@ Before compiling, make sure you have the above dependencies installed and
 accessible in common directories (/usr/lib, /usr/include/ etc.). If so, the
 only think you need to do is run:
 
-  $ `make`
+```bash
+  $ make
+```
 
 If you get some error, you probably need to edit Makefile file to point to the
 correct directories of the dependencies are installed.
@@ -27,7 +29,9 @@ correct directories of the dependencies are installed.
 Usage
 =====
 
-  `./dibr-player samples/images/flower04.jpg`
+```bash
+  ./dibr-player samples/images/flower04.jpg
+```
 
 Keyboard shortcuts
 ==================
