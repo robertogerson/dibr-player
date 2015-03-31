@@ -30,7 +30,7 @@ Usage
 =====
 
 ```bash
-  ./dibr-player samples/images/flower04.jpg
+  $ ./dibr-player samples/images/flower04.jpg
 ```
 
 Keyboard shortcuts
