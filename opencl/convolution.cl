@@ -37,16 +37,15 @@ bool isGhost (
 }
 
 #define WITH_PRECOMPILED_PARAMS 0
-#define WITH_LOCK 1
+#define WITH_LOCK 0
+#define PER_LINE 1
 
 __kernel void dibr (
        __constant DATA_TYPE *src, /* Can we change that for a uchar3 ? */
        __constant DATA_TYPE  *depth,
        __global DATA_TYPE *out,
        __global DATA_TYPE *depth_out,
-// #if WITH_LOCK
        volatile __global int *depth_mutex,
-// #endif
        __global DATA_TYPE *mask,
 #if !WITH_PRECOMPILED_PARAMS
        int rows, int cols,                     // We can pre-compile this values
@@ -56,15 +55,24 @@ __kernel void dibr (
        __constant int *depth_shift_table_lookup,
        int S)
 {
+
+#if PER_LINE
+    const int y = get_global_id(0);
+#else
         const int x = get_global_id(0);
         const int y = get_global_id(1);
+#endif
 
-//for (int x = 0; x < cols; x ++)
-//{
+#if PER_LINE
+for (int x = 0; x < cols; x ++)
+{
+#endif
         int idx = (y*src_step) + (x*channel);
 
-        //if ( isGhost (x, y, depth, src_step, channel, cols, rows) ) // Should not project ghost pixels
-        //   return;
+#if !PER_LINE
+        if ( isGhost (x, y, depth, mask_step/2, 1, cols, rows) ) // Should not project ghost pixels
+            return;
+#endif
 
         int D = depth[ y * (mask_step/2) + x];
         int shift = depth_shift_table_lookup [D];
@@ -167,7 +175,10 @@ __kernel void dibr (
             newidx = y * mask_step + x + cols;
             mask [newidx] = '1';
 #endif
-//}
+
+#if PER_LINE
+}
+#endif
 
 }
 
@@ -197,8 +208,9 @@ __kernel void hole_filling (
         // search for background depth
         for (int i = -INTERPOLATION_HALF_SIZE_WINDOW; i <= INTERPOLATION_HALF_SIZE_WINDOW; i++)
         {
-            for (int j = -INTERPOLATION_HALF_SIZE_WINDOW; j <= INTERPOLATION_HALF_SIZE_WINDOW; j++)
-            {
+            int j = 0;
+            // for (int j = -INTERPOLATION_HALF_SIZE_WINDOW; j <= INTERPOLATION_HALF_SIZE_WINDOW; j++)
+            // {
                 if (x + i >= 0 && x + i < 2 * cols
                     && y + j >= 0 && y + j <= rows)
                 {
@@ -209,14 +221,15 @@ __kernel void hole_filling (
                         if (depthOut[idxDepthOut] < background)
                             background = depthOut[idxDepthOut];
                 }
-             }
+             // }
         }
 
-        // Do interpolation only with foreground objects
+        // Do interpolation only with background objects
         for (int i = -INTERPOLATION_HALF_SIZE_WINDOW; i <= INTERPOLATION_HALF_SIZE_WINDOW; i++)
         {
-            for (int j = -INTERPOLATION_HALF_SIZE_WINDOW; j <= INTERPOLATION_HALF_SIZE_WINDOW; j++)
-            {
+            int j = 0;
+            // for (int j = -INTERPOLATION_HALF_SIZE_WINDOW; j <= INTERPOLATION_HALF_SIZE_WINDOW; j++)
+            // {
                 if (x + i >= 0 && x + i < 2 * cols
                     && y + j >= 0 && y + j <= rows)
                 {
@@ -237,7 +250,7 @@ __kernel void hole_filling (
                         total += 1.0;
                     }
                 }
-            }
+            // }
         }
 
         int idxOut = y * out_step + x * channel;

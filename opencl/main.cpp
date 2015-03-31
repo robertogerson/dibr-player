@@ -12,7 +12,6 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "time.h"
 #include <iostream>
 #include <sstream>
 #include <ctime>
@@ -39,10 +38,13 @@
 using namespace cv;
 using namespace std;
 
-//OpenCL Header Files
+//OpenCL Header files
 #include <CL/opencl.h>
-#include <dibr_cpu.h>
+
+// My Header files
+#include "dibr_cpu.h"
 #include "dibr_ocl.h"
+#include "yuv.h"
 
 // Options -  We need a better way to do that
 int  width = 1920/2, height = 1080/2;
@@ -62,23 +64,13 @@ Mat image, input, output;
 // Some configuration sets
 #define EYE_SEP_STEP 0.25
 #define CONV_KERNEL_SIZE 9
+#define YUV_INPUT 1
 
 double sigmax = 10.0, sigmay = 90;  // assymetric gaussian filter
 double conv_kernel [CONV_KERNEL_SIZE];
 // end
 
 using namespace std;
-
-//function to get the time difference
-long int timeval_subtract(struct timeval *result, struct timeval *t2, struct timeval *t1)
-{
-  (void) result;
-
-  long int diff = (t2->tv_usec + 1000000 * t2->tv_sec) - (t1->tv_usec + 1000000 * t1->tv_sec);
-  //result->tv_sec = diff / 1000000;
-  //result->tv_usec = diff % 1000000;
-  return (diff);
-}
 
 bool handle_key(int key)
 {
@@ -154,6 +146,36 @@ int main(int argc,char *argv[])
   // end eye tracking
 #endif
 
+
+#if YUV_INPUT
+  FILE *fin = NULL, *fin_depth = NULL;
+  struct YUV_Capture cap, cap_depth;
+  enum YUV_ReturnValue ret;
+  IplImage *bgr, *bgr_depth;
+
+  fin = fopen (opts['i'].c_str(), "rb");
+  if (!fin)
+  {
+    fprintf (stderr, "error: unable to open file: %s\n", opts['i'].c_str());
+  }
+  fin_depth = fopen (opts['d'].c_str(), "rb");
+  if (!fin)
+  {
+    fprintf (stderr, "error: unable to open file: %s\n", opts['i'].c_str());
+  }
+  ret = YUV_init(fin, 1920, 1088, &cap);
+  assert (ret == YUV_OK);
+
+  ret = YUV_init(fin_depth, 1920, 1088, &cap_depth);
+  assert (ret == YUV_OK);
+
+  bgr = cvCreateImage(cvSize(1920, 1088), IPL_DEPTH_8U, 3);
+  assert(bgr);
+
+  bgr_depth = cvCreateImage(cvSize(1920, 1088), IPL_DEPTH_8U, 3);
+  assert(bgr);
+
+#else
   VideoCapture inputVideo(opts['i']);              // Open input
   inputVideo.set(CV_CAP_PROP_FPS, 10);
 
@@ -165,6 +187,7 @@ int main(int argc,char *argv[])
   inputVideo >> image;
 
   int ex = static_cast<int>(inputVideo.get(CV_CAP_PROP_FOURCC));
+
   VideoWriter outputVideo;
   if(opts.count('u'))
   {
@@ -176,6 +199,7 @@ int main(int argc,char *argv[])
 
     cout << "create output video " << opts['u'].c_str() << endl;
   }
+#endif
 
   // Get mime-type of input
   magic_t magic;
@@ -191,7 +215,8 @@ int main(int argc,char *argv[])
   Mat color, depth, depth_filtered, depth_out, isHole, border, dist;
 
   input.create(height, width, CV_8UC(3));
-  resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
+  image.create(height, width, CV_8UC(3));
+  // resize(image, input, input.size(), 0, 0, CV_INTER_CUBIC);
 
   int input_rows = input.rows;
   int input_cols = input.cols / 2;
@@ -237,12 +262,59 @@ int main(int argc,char *argv[])
   cout << "#Decode\tResize\tCrop\tFilter\tDIBR\tShow" << endl;
   for(;;)
   {
+//     gettimeofday(&now, NULL);
+
+    memset(pixelMutex, 0, input.cols * input.rows * sizeof(int));
+    isHole.setTo(cv::Scalar(0));
+    depth_out.setTo(cv::Scalar(0, 0, 0));
+    output.setTo(cv::Scalar(255, 255, 255));
+
     if (must_update)
     {
-      gettimeofday(&now, NULL);
       if(is_input_video && !paused)
-        inputVideo >> image;
+      {
+#if YUV_INPUT
+        ret = YUV_read(&cap);
+        if (ret == YUV_EOF)
+        {
+          cvWaitKey(0);
+          break;
+        }
+        else if(ret == YUV_IO_ERROR)
+        {
+          fprintf(stderr, "I/O error\n");
+          break;
+        }
+        cvCvtColor(cap.ycrcb, bgr, CV_YCrCb2BGR);
 
+        ret = YUV_read(&cap_depth);
+        if (ret == YUV_EOF)
+        {
+          cvWaitKey(0);
+          break;
+        }
+        else if(ret == YUV_IO_ERROR)
+        {
+          fprintf(stderr, "I/O error\n");
+          break;
+        }
+        cvCvtColor(cap_depth.ycrcb, bgr_depth, CV_YCrCb2RGB);
+        Mat tmp_bgr (bgr);
+        Mat tmp_bgr_depth (bgr_depth);
+        Mat tmp_bgr_depth_resized;
+        tmp_bgr_depth_resized.create(depth.cols, depth.rows, CV_8UC(3));
+
+        resize(tmp_bgr, color, color.size(), 0, 0, CV_INTER_CUBIC);
+        resize(tmp_bgr_depth, tmp_bgr_depth_resized, depth.size(), 0, 0, CV_INTER_CUBIC);
+        cvtColor(tmp_bgr_depth_resized, depth, CV_RGB2GRAY);
+
+        // resize(image, tmp_image, cvSize(width, height), 0, 0, CV_INTER_CUBIC);
+#else
+        inputVideo >> image;
+#endif
+      }
+
+      /*
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
@@ -258,7 +330,7 @@ int main(int argc,char *argv[])
       cropped.copyTo(color);
       cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
       cvtColor(cropped, depth, CV_RGB2GRAY);
-
+      */
       // gettimeofday(&now, NULL);
       // bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED );
       // GaussianBlur(cropped, depth, Size (101, 101), 10, 90);
@@ -266,10 +338,10 @@ int main(int argc,char *argv[])
       // diff = timeval_subtract(&result, &end, &now);
       // cout << (float)diff << "\t";
 
-      imshow("depth", depth);
-      detect_border(depth, border);
-      imshow("border", border);
+      /* detect_border(depth, border);
+      imshow("border", border); */
 
+      /*
       Mat bw;
       cv::threshold(border, bw, 40, 255, CV_THRESH_BINARY);
       bw =  cv::Scalar::all(255) - bw;
@@ -280,18 +352,15 @@ int main(int argc,char *argv[])
       gettimeofday(&end, NULL);
       diff = timeval_subtract(&result, &end, &now);
       cout << (float)diff << "\t";
+      */
 
-      memset(pixelMutex, 0, input.cols * input.rows * sizeof(int));
-      isHole.setTo(cv::Scalar(0));
-      depth_out.setTo(cv::Scalar(0, 0, 0));
-      output.setTo(cv::Scalar(255, 255, 255));
-
-      imshow("image", color);
-      imshow("depth2", depth);
+//      imshow("image", color);
+//      imshow("depth", depth);
 
       //running parallel program
-      gettimeofday(&now, NULL);
-      // o.conv( color, output, &kernel[0], program );
+      // gettimeofday(&now, NULL);
+
+        // o.conv( color, output, &kernel[0], program );
         if(use_opencl)
         {
           o.dibr ( &kernel[0], program,
@@ -316,9 +385,9 @@ int main(int argc,char *argv[])
                          enable_dist,
                          is_stereo );
 
-      gettimeofday(&end, NULL);
-      diff = timeval_subtract(&result, &end, &now);
-      cout << (float)diff << "\t";
+      // gettimeofday(&end, NULL);
+      // diff = timeval_subtract(&result, &end, &now);
+      // cout << (float)diff << "\t";
 
       if(fullscreen)
         cvSetWindowProperty("Output", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
@@ -326,19 +395,19 @@ int main(int argc,char *argv[])
 
       must_update = false;
 
-      if (output_video)
+      /* if (output_video)
       {
         outputVideo.write(output);
-      }
+      } */
     }
 
-    gettimeofday(&now, NULL);
+    //gettimeofday(&now, NULL);
     int key = cvWaitKey(1);
-    gettimeofday(&end, NULL);
+    /*gettimeofday(&end, NULL);
     diff = timeval_subtract(&result, &end, &now);
     cout << (float)diff << endl;
-
-    cout << "eye_sep:" << (float) eye_sep << endl;
+    */
+    // cout << "eye_sep:" << (float) eye_sep << endl;
 
     if(!handle_key(key)) // It will return false if key is ESC
         break;
@@ -383,6 +452,11 @@ int main(int argc,char *argv[])
     cv::imshow("video", frame);
 #endif
   }
+
+  printf ("Mean: %.3f fps\n", (total_frames / total_time) * 1000.0);
+#if YUV_INPUT
+  fclose(fin);
+#endif
 
   delete pixelMutex;
   o.destroy();

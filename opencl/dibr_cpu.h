@@ -95,7 +95,7 @@ bool shift_surface ( Mat &image_color,
                      bool enable_dist = true,
                      bool is_stereo = false)
 {
-  bool mask [output.rows][output.cols];
+  bool mask [output.rows][output.cols]; // we can do better than the that
   memset (mask, false, output.rows * output.cols * sizeof(bool));
 
   // Calculate left image

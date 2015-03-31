@@ -11,6 +11,20 @@
 #define NAME 10000
 #define MAX_DEVICES 4
 
+double total_frames = 0.0;
+double total_time = 0;
+
+//function to get the time difference
+long int timeval_subtract(struct timeval *result, struct timeval *t2, struct timeval *t1)
+{
+  (void) result;
+
+  long int diff = (t2->tv_usec + 1000000 * t2->tv_sec) - (t1->tv_usec + 1000000 * t1->tv_sec);
+  //result->tv_sec = diff / 1000000;
+  //result->tv_usec = diff % 1000000;
+  return (diff);
+}
+
 //dir containing kernel functions
 #define CHECK_OPENCL_ERROR(actual, msg) \
     if(checkVal(actual, CL_SUCCESS, msg)) \
@@ -774,8 +788,8 @@ public:
                               RoundUp(local[1], src.rows),
                               1 };
         int s = 0, channels = 0;
-
         int arg = -1;
+
         //setting the kernel arguments
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageIn);
         CHECK_OPENCL_ERROR(status, "");
@@ -819,6 +833,7 @@ public:
         return SUCCESS;
     }
 
+#define PER_LINE 1
     cl_int dibr( cl_kernel *ke, cl_program program,
                  Mat &src,
                  Mat &depth,
@@ -847,6 +862,11 @@ public:
         size_t mask_bytes = mask.rows * mask.step * sizeof (unsigned char);
         size_t pixel_mutex_bytes = out.rows * out.cols * sizeof (int);
 
+
+        struct timeval end, result, now;
+        long int diff;
+        gettimeofday(&now, NULL);
+
         // Begin filter
         if(flag == 0)
         {
@@ -869,7 +889,6 @@ public:
             dimageMask = create_rw_buffer(mask_bytes, mask.data, 0, NULL);
             flag = 1;
         }
-
 
         //Write buffers!!
         status = write_buffer(dShiftLookup, shift_lookup_table_bytes, shift_table_lookup, event, 1);
@@ -900,15 +919,24 @@ public:
         clFinish(queue);
 
         // Ok! Let's start to compute now!
+#if PER_LINE
+        size_t local[3] = { 9, 1, 1 };
+        size_t global[3] = { (size_t) src.rows,
+                             1,
+                             1 };
+
+#else
         size_t local[3] = { 16, 9, 1 };
         size_t global[3] = { (size_t) src.cols,
                              (size_t) src.rows,
                              1 };
+#endif
         int s = 0, channels = 0;
         int arg = -1;
 
         //setting the kernel arguments
-        /* status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepth);
+        /*
+        status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepth);
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageDepthFiltered);
@@ -932,21 +960,27 @@ public:
         CHECK_OPENCL_ERROR(status, "");
 
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_mem), &dimageFilter);
-        CHECK_OPENCL_ERROR(status, ""); */
+        CHECK_OPENCL_ERROR(status, "");
 
         // Enqueue filter
         // status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
         // CHECK_OPENCL_ERROR(status, "");
         // End filter
+        */
 
         // start dibr
         kernel = ke[1];
         int S = 20;
 
+#if PER_LINE
+        local[0] = 9;
+        global[0] = (size_t) src.rows;
+#else
         local[0] = 16;
         local[1] = 9;
         global[0] = (size_t) src.cols;
         global[1] = (size_t) src.rows;
+#endif
 
         arg = -1;
         //setting the kernel arguments
@@ -999,10 +1033,14 @@ public:
         status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &S);
         CHECK_OPENCL_ERROR(status, "");
 
+#if PER_LINE
+        status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, global, local, 0, NULL, &event[0]);
+        CHECK_OPENCL_ERROR(status, "");
+#else
         status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
         CHECK_OPENCL_ERROR(status, "");
+#endif
         // End dibr
-
 
         if(with_hole_filling)
         {
@@ -1050,20 +1088,32 @@ public:
           status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &s);
           CHECK_OPENCL_ERROR(status, "");
 
-          int INTERPOLATION_HALF_SIZE_WINDOW = 5;
+          int INTERPOLATION_HALF_SIZE_WINDOW = 15;
           status = clSetKernelArg(kernel, ++arg, sizeof(cl_int), &INTERPOLATION_HALF_SIZE_WINDOW);
           CHECK_OPENCL_ERROR(status, "");
 
-          status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[0]);
+//#if PER_LINE
+          //status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, global, local, 0, NULL, &event[0]);
+          //CHECK_OPENCL_ERROR(status, "");
+//#else
+          status = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, &event[1]);
           CHECK_OPENCL_ERROR(status, "");
+//#endif
           // End hole-filling
         }
 
         clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
 
+        gettimeofday(&end, NULL);
+        diff = timeval_subtract(&result, &end, &now);
+
+        total_frames += 1.0;
+        total_time += (double)(diff) / 1000.0;
+        cout << (float)diff << "\n";
+
         status = read_buffer(dimageOut, out_bytes, out.data, event, 1);
         CHECK_OPENCL_ERROR(status, "");
-        status = clWaitForEvents (1, &event[1]);
+        status = clWaitForEvents (1, &event[2]);
         clFinish(queue); // We need to think in change that for a callback (read Heterogeneous Computing with OpenCL page 173)
 
         return SUCCESS;
