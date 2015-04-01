@@ -8,7 +8,7 @@
 #include "opencv2/imgproc/imgproc_c.h"
 #include <opencv2/objdetect/objdetect.hpp>
 
-#define ENABLE_EYE_TRACKING 0
+// #define ENABLE_EYE_TRACKING 0
 
 #if ENABLE_EYE_TRACKING
 cv::CascadeClassifier face_cascade;

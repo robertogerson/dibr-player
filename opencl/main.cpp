@@ -1,4 +1,5 @@
 #define CL_USE_DEPRECATED_OPENCL_1_1_APIS
+
 //System header files
 #include <iostream>
 #include <cstdlib>
@@ -47,7 +48,7 @@ using namespace std;
 #include "yuv.h"
 
 // Options -  We need a better way to do that
-int  width = 1920/2, height = 1080/2;
+int  width = 1920, height = 1080;
 bool depth_filter = true;
 bool must_update = false, paused = false;
 bool enable_hole_filling = true;
@@ -148,7 +149,7 @@ int main(int argc,char *argv[])
 
 
 #if YUV_INPUT
-  FILE *fin = NULL, *fin_depth = NULL;
+  FILE  *fin = NULL, *fin_depth = NULL;
   struct YUV_Capture cap, cap_depth;
   enum YUV_ReturnValue ret;
   IplImage *bgr, *bgr_depth;
@@ -158,7 +159,9 @@ int main(int argc,char *argv[])
   {
     fprintf (stderr, "error: unable to open file: %s\n", opts['i'].c_str());
   }
+
   fin_depth = fopen (opts['d'].c_str(), "rb");
+
   if (!fin)
   {
     fprintf (stderr, "error: unable to open file: %s\n", opts['i'].c_str());
@@ -202,14 +205,18 @@ int main(int argc,char *argv[])
 #endif
 
   // Get mime-type of input
-  magic_t magic;
+  /* magic_t magic;
   const char *mime;
   magic = magic_open(MAGIC_MIME_TYPE);
+
   magic_load(magic, NULL);
   magic_compile(magic, NULL);
-  mime = magic_file(magic, opts['i'].c_str());
-  is_input_video = (strstr(mime, "image") == NULL);
-  magic_close(magic);
+  mime = magic_file(magic, opts['i'].c_str()); */
+
+  is_input_video = true;
+
+  /* (strstr(mime, "image") == NULL);
+  magic_close(magic); */
 
   // Creating image objects
   Mat color, depth, depth_filtered, depth_out, isHole, border, dist;
@@ -242,12 +249,10 @@ int main(int argc,char *argv[])
 
   //creating OCLX object
   OCLX o;
+
   //structures to hold kernel and program
   cl_kernel kernel[10];
   cl_program program;
-
-  struct timeval end,result,now;
-  long int diff;
 
   // Output Window
   bool fullscreen = opts.count('f');
@@ -298,7 +303,9 @@ int main(int argc,char *argv[])
           fprintf(stderr, "I/O error\n");
           break;
         }
+
         cvCvtColor(cap_depth.ycrcb, bgr_depth, CV_YCrCb2RGB);
+
         Mat tmp_bgr (bgr);
         Mat tmp_bgr_depth (bgr_depth);
         Mat tmp_bgr_depth_resized;

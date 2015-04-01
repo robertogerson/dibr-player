@@ -67,11 +67,10 @@ void parse_opts(int argc, char **argv)
         printf ("Run with stereo support.\n");
         opts['s'] = "1";
       case 't':
-        printf ("Run with head tracking support.\n");
-        opts['t'] = "1";
+        // printf ("Run with head tracking support.\n");
+        // opts['t'] = "1";
       default:
       abort();
     }
   }
 }
-
