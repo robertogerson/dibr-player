@@ -77,6 +77,7 @@ struct user_params
   bool paused;
   bool depth_filter;
   bool show_all;
+  bool enable_occlusion_layer;
 
   /* Gaussian filter parameters */
   double sigmax;
@@ -220,12 +221,9 @@ bool shift_surface ( user_params &p,
                      SDL_Surface *depth_frame_filtered,
                      SDL_Surface *left_image,
                      SDL_Surface *right_image,
-                     int S = 58)
+                     bool hole_filling,
+                     int S = 58 )
 {
-
-  SDL_FillRect(left_image, NULL, 0xFFFFFF);
-  SDL_FillRect(right_image, NULL, 0xFFFFFF);
-
   // This value is half od the maximun shift
   // Maximun shift comes at depth == 0
   int N = 256; // Number of depth-planes
@@ -270,7 +268,7 @@ bool shift_surface ( user_params &p,
       }
     }
 
-    if(p.hole_filling)
+    if(hole_filling)
     {
       for (int x = 1; x < cols; x++)
       {
@@ -282,6 +280,8 @@ bool shift_surface ( user_params &p,
           }
           else
           {
+            sdl_put_pixel (left_image, x, y, sdl_get_pixel(left_image, x-1, y));
+/*
             Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
             for (int x1 = x-7; x1 <= x-4; x1++)
             {
@@ -301,7 +301,7 @@ bool shift_surface ( user_params &p,
                                           r_new,
                                           g_new,
                                           b_new);
-            sdl_put_pixel (left_image, x, y, pixel_new );
+            sdl_put_pixel (left_image, x, y, pixel_new ); */
           }
         }
       }
@@ -332,7 +332,7 @@ bool shift_surface ( user_params &p,
       }
     }
 
-    if(p.hole_filling)
+    if(hole_filling)
     {
       for (int x = cols-1 ; x >= 0; --x)
       {
@@ -344,6 +344,8 @@ bool shift_surface ( user_params &p,
           }
           else
           {
+            sdl_put_pixel (right_image, x, y, sdl_get_pixel(right_image, x+1, y));
+/*
             Uint32 r_sum = 0, g_sum = 0, b_sum = 0;
             for (int x1 = x+4; x1 <= x+7; x1++)
             {
@@ -363,7 +365,7 @@ bool shift_surface ( user_params &p,
                                             r_new,
                                             g_new,
                                             b_new );
-            sdl_put_pixel (right_image, x, y, pixel_new );
+            sdl_put_pixel (right_image, x, y, pixel_new ); */
           }
         }
       }
@@ -458,7 +460,7 @@ bool init(user_params &p, vlc_sdl_ctx &ctx)
   if (SDL_SetVideoMode( p.screen_width,
                         p.screen_height,
                         p.screen_bpp,
-                        /*SDL_FULLSCREEN |*/ SDL_OPENGL) == NULL )
+                        /* SDL_FULLSCREEN | */ SDL_OPENGL) == NULL )
     return false;
 
   SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 ); // *new*
@@ -526,8 +528,8 @@ void clean_up(vlc_sdl_ctx &ctx)
 
 void set_default_params(user_params &p)
 {
-  p.screen_width = 1024;
-  p.screen_height = 768;
+  p.screen_width = 1920;
+  p.screen_height = 1080;
   p.screen_bpp = 32;
   p.fullscreen = false;
 
@@ -535,6 +537,7 @@ void set_default_params(user_params &p)
   p.paused = true;
   p.depth_filter = true;
   p.show_all = false;
+  p.enable_occlusion_layer = false;
 
   /* Gaussian filter parameters */
   p.sigmax = 500.0;
@@ -572,21 +575,36 @@ int main(int argc, char* argv[])
   SDL_Surface *image = IMG_Load(p.file_path);
 #endif
 
+  // SDL_Surface *image_2 = IMG_Load("samples/images/stilllife.jpg");
   SDL_Surface *image_all = sdl_create_RGB_surface(image, image->w, image->h*2 );
-  SDL_Surface *image_color = sdl_create_RGB_surface(image, image->w/2, image->h);
-  sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h );
+  SDL_Surface *image_color = sdl_create_RGB_surface(image, image->w/2, image->h/2 );
+  sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h/2 );
 
-  SDL_Surface *depth_frame = sdl_create_RGB_surface(image, image->w/2, image->h);
-  sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h);
+  SDL_Surface *depth_frame = sdl_create_RGB_surface( image, image->w/2, image->h/2 );
+  sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h/2 );
 
-  SDL_Surface *depth_frame_filtered = sdl_create_RGB_surface( image, image->w/2, image->h);
-  sdl_crop_surface( image, depth_frame_filtered, image->w/2, 0, image->w/2, image->h);
+  SDL_Surface *depth_frame_filtered = sdl_create_RGB_surface( image, image->w/2, image->h/2 );
+  sdl_crop_surface( image, depth_frame_filtered, image->w/2, 0, image->w/2, image->h/2 );
+  
+  SDL_Surface *occlusion_color_frame = sdl_create_RGB_surface( image, image->w/2, image->h/2 );
+  sdl_crop_surface( image, occlusion_color_frame, 0, image->h/2, image->w/2, image->h/2 );
+
+  SDL_Surface *occlusion_depth_frame = sdl_create_RGB_surface( image, image->w/2, image->h/2 );
+  sdl_crop_surface( image, occlusion_depth_frame, image->w/2, image->h/2, image->w/2, image->h/2 );
+
+/*
+  SDL_Surface *image_all_2 = sdl_create_RGB_surface(image_2, image_2->w, image_2->h*2 );
+  SDL_Surface *image_color_2 = sdl_create_RGB_surface(image_2, image_2->w/2, image_2->h);
+  sdl_crop_surface( image_2, image_color_2, 0, 0, image_2->w/2, image_2->h );
+
+  SDL_Surface *depth_frame_2 = sdl_create_RGB_surface(image_2, image_2->w/2, image_2->h);
+  sdl_crop_surface( image_2, depth_frame_2, image_2->w/2, 0, image_2->w/2, image_2->h); */
 
   /* Create a 32-bit surface with the bytes of each pixel in R,G,B,A order, as
    * expected by OpenGL for textures */
   SDL_Surface *left_color = sdl_create_RGB_surface(image_color, image_color->w, image_color->h);
   SDL_Surface *right_color = sdl_create_RGB_surface( image_color, image_color->w, image_color->h);
-  SDL_Surface *stereo_color = sdl_create_RGB_surface( image_color, image->w, image->h);
+  SDL_Surface *stereo_color = sdl_create_RGB_surface( image_color, image->w, image->h/2);
 
   GLuint TextureID = 0;
   /* Generate the openGL textures */
@@ -611,6 +629,11 @@ int main(int argc, char* argv[])
     SDL_LockMutex(ctx.mutex);
     sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h);
     sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h);
+    sdl_crop_surface( image, occlusion_color_frame, 0, image->h/2, image->w/2, image->h);
+    sdl_crop_surface( image, occlusion_depth_frame, image->w/2, image->w/2, image->h/2, image->h);
+
+    // SDL_BlitSurface(image_color_2, NULL, image_color, NULL);
+    // SDL_BlitSurface(depth_frame_2, NULL, depth_frame, NULL);
 
     //FCI just have a copy to work with
     sdl_crop_surface( image,
@@ -623,10 +646,25 @@ int main(int argc, char* argv[])
 
     // Generate stereo image
     // FCI depth_frame_filtered
+    SDL_FillRect(left_color, NULL, 0xFFFFFF);
+    SDL_FillRect(right_color, NULL, 0xFFFFFF);
+
+    if (p.enable_occlusion_layer)
+    {
+      shift_surface( p, occlusion_color_frame,
+                     occlusion_depth_frame,
+                     occlusion_depth_frame,
+                     left_color,
+                     right_color,
+                     false,
+                     S );
+    }
+
     shift_surface( p, image_color, depth_frame,
                    depth_frame_filtered,
                    left_color,
                    right_color,
+                   p.hole_filling,
                    S );
 
     SDL_FillRect(stereo_color, NULL, 0x000000);
@@ -716,6 +754,12 @@ int main(int argc, char* argv[])
             p.show_all = !p.show_all;
             printf ("Show reference frames: %d.\n", p.show_all);
           }
+          else if(event.key.keysym.sym == 'o')
+          {
+            p.enable_occlusion_layer = !p.enable_occlusion_layer;
+            printf ("Occlusion Layer: %d.\n", p.enable_occlusion_layer);
+          }
+
           break;
       }
     }
