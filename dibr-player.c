@@ -78,6 +78,7 @@ struct user_params
   bool depth_filter;
   bool show_all;
   bool enable_occlusion_layer;
+  double eye_sep;
 
   /* Gaussian filter parameters */
   double sigmax;
@@ -172,12 +173,13 @@ SDL_Surface* filter_depth( SDL_Surface* depth_frame,
 }
 
 /****************** 3D Warping related functions ******************************/
-int find_shiftMC3(int depth, int Ny)
+int find_shiftMC3( user_params &p,
+                   int depth, int Ny)
 {
   int h;
   int nkfar = 128, nknear = 128, kfar = 0, knear = 0;
   int n_depth = 256;  // Number of depth planes
-  int eye_sep = 6;    // eye separation 6cm
+  int eye_sep = p.eye_sep;    // eye separation 6cm
 
   // This is a display dependant parameter and the maximum shift depends
   // on this value. However, the maximum disparity should not exceed
@@ -235,7 +237,7 @@ bool shift_surface ( user_params &p,
 
   // \fixme remove from here
   for(int i = 0; i < N; i++)
-    depth_shift_table_lookup[i] = find_shiftMC3(i, N);
+    depth_shift_table_lookup[i] = find_shiftMC3(p, i, N);
 
   if (p.depth_filter)
   {
@@ -538,6 +540,8 @@ void set_default_params(user_params &p)
   p.depth_filter = true;
   p.show_all = false;
   p.enable_occlusion_layer = false;
+  p.eye_sep = 6;
+
 
   /* Gaussian filter parameters */
   p.sigmax = 500.0;
@@ -569,6 +573,12 @@ int main(int argc, char* argv[])
   if(init(p, ctx) == false)
     return 1;
 
+  if ( ( SDL_EnableKeyRepeat( 100, SDL_DEFAULT_REPEAT_INTERVAL ) ) )
+  {
+    fprintf( stderr, "Setting keyboard repeat failed: %s\n",
+             SDL_GetError( ) );
+    exit( 1 );
+  }
 #ifdef USE_LIBVLC
   SDL_Surface *image = ctx.surf;
 #else
@@ -627,10 +637,10 @@ int main(int argc, char* argv[])
   while(quit == false)
   {
     SDL_LockMutex(ctx.mutex);
-    sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h);
-    sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h);
-    sdl_crop_surface( image, occlusion_color_frame, 0, image->h/2, image->w/2, image->h);
-    sdl_crop_surface( image, occlusion_depth_frame, image->w/2, image->w/2, image->h/2, image->h);
+    sdl_crop_surface( image, image_color, 0, 0, image->w/2, image->h/2);
+    sdl_crop_surface( image, depth_frame, image->w/2, 0, image->w/2, image->h/2);
+    sdl_crop_surface( image, occlusion_color_frame, 0, image->h/2, image->w/2, image->h/2);
+    sdl_crop_surface( image, occlusion_depth_frame, image->w/2, image->h/2, image->w/2, image->h/2);
 
     // SDL_BlitSurface(image_color_2, NULL, image_color, NULL);
     // SDL_BlitSurface(depth_frame_2, NULL, depth_frame, NULL);
@@ -651,7 +661,8 @@ int main(int argc, char* argv[])
 
     if (p.enable_occlusion_layer)
     {
-      shift_surface( p, occlusion_color_frame,
+      shift_surface( p,
+                     occlusion_color_frame,
                      occlusion_depth_frame,
                      occlusion_depth_frame,
                      left_color,
@@ -729,9 +740,9 @@ int main(int argc, char* argv[])
           if(event.key.keysym.sym == 27)
             quit = true;
           else if(event.key.keysym.sym == '=')
-            S++;
+            p.eye_sep++;
           else if(event.key.keysym.sym == '-')
-            S--;
+            p.eye_sep--;
           else if(event.key.keysym.sym == 'h')
           {
             p.hole_filling = !p.hole_filling;
