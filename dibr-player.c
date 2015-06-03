@@ -79,6 +79,8 @@ struct user_params
   bool show_all;
   bool enable_occlusion_layer;
   double eye_sep;
+  int ghost_threshold;
+  bool enable_ghost;
 
   /* Gaussian filter parameters */
   double sigmax;
@@ -217,6 +219,39 @@ int find_shiftMC3( user_params &p,
   return h;
 }
 
+bool is_ghost(SDL_Surface *depth_map, int x, int y, int ghost_threshold)
+{
+  int SUM = 0;
+  int Dxy = 0;
+
+  for (int i = x-1; i <= x+1; i++)
+    for(int j = y-1; j <= y+1; j++)
+      if (i >= 0 && i < depth_map->w &&
+          j >= 0 && j < depth_map->h)
+      {
+        Uint32 pixel = sdl_get_pixel(depth_map, x, y);
+        Uint8 r, g, b;
+        SDL_GetRGB (pixel, depth_map->format, &r, &g, &b);
+        int Y, U, V;
+        get_YUV(r, g, b, Y, U, V);
+        int D = Y;
+
+        SUM += D;
+
+        if (i == x && j == y) Dxy = D;
+      }
+
+
+  if (abs(SUM - 9*Dxy) > ghost_threshold)
+  {
+    printf ("%d %d %d %d\n", x, y, SUM, Dxy);
+    return true;
+  }
+
+  return false;
+}
+
+
 bool shift_surface ( user_params &p,
                      SDL_Surface *image_color,
                      SDL_Surface *depth_frame,
@@ -224,6 +259,8 @@ bool shift_surface ( user_params &p,
                      SDL_Surface *left_image,
                      SDL_Surface *right_image,
                      bool hole_filling,
+                     bool **mask_left,
+                     bool **mask_right,
                      int S = 58 )
 {
   // This value is half od the maximun shift
@@ -232,8 +269,6 @@ bool shift_surface ( user_params &p,
   // int S = 58;
   int depth_shift_table_lookup[N];
   int cols = image_color->w, rows = image_color->h;
-  bool mask [rows][cols];
-  memset (mask, false, rows*cols*sizeof(bool));
 
   // \fixme remove from here
   for(int i = 0; i < N; i++)
@@ -247,6 +282,7 @@ bool shift_surface ( user_params &p,
                   depth_frame->w, depth_frame->h);
   };
 
+  bool **mask = mask_left;
   // Calculate left image
   for (int y = 0; y < rows; y++)
   {
@@ -261,6 +297,15 @@ bool shift_surface ( user_params &p,
       get_YUV(r, g, b, Y, U, V);
       int D = Y;
       int shift = depth_shift_table_lookup [D];
+
+      pixel = sdl_get_pixel(image_color, x, y);
+      SDL_GetRGB (pixel, image_color->format, &r, &g, &b);
+
+      if (r == 0 && g == 0 && b == 0)
+        continue;
+
+      if (p.enable_ghost && is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
+        continue;
 
       if( x + S - shift < cols)
       {
@@ -310,8 +355,8 @@ bool shift_surface ( user_params &p,
     }
   }
 
+  mask = mask_right;
   // Calculate right image
-  memset (mask, false, rows*cols*sizeof(bool));
   for (int y = 0; y < rows; y++)
   {
     for (int x = 0; x < cols; x++)
@@ -325,6 +370,15 @@ bool shift_surface ( user_params &p,
       get_YUV(r, g, b, Y, U, V);
       int D = Y;
       int shift = depth_shift_table_lookup [D];
+
+      if (p.enable_ghost && is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
+        continue;
+
+      pixel = sdl_get_pixel(image_color, x, y);
+      SDL_GetRGB (pixel, image_color->format, &r, &g, &b);
+
+      if (r == 0 && g == 0 && b == 0)
+        continue;
 
       if( x + shift - S >= 0 )
       {
@@ -541,7 +595,8 @@ void set_default_params(user_params &p)
   p.show_all = false;
   p.enable_occlusion_layer = false;
   p.eye_sep = 6;
-
+  p.enable_ghost = false;
+  p.ghost_threshold = 1;
 
   /* Gaussian filter parameters */
   p.sigmax = 500.0;
@@ -633,6 +688,18 @@ int main(int argc, char* argv[])
 #endif
   ctx.frame_count = 0;
 
+  // allocate mask matrix
+  int rows = image_color->h;
+  int cols = image_color->w;
+  bool **mask_left = (bool **)malloc(rows * sizeof(bool*));
+  bool **mask_right = (bool **)malloc(rows * sizeof(bool*));
+  for (int i = 0; i < rows; i++)
+  {
+    mask_left[i] = (bool*) malloc(cols * sizeof(bool));
+    mask_right[i] = (bool*) malloc(cols * sizeof(bool));
+  }
+    
+
   /****** Main Loop ******/
   while(quit == false)
   {
@@ -659,6 +726,11 @@ int main(int argc, char* argv[])
     SDL_FillRect(left_color, NULL, 0xFFFFFF);
     SDL_FillRect(right_color, NULL, 0xFFFFFF);
 
+    for (int i = 0; i < rows; i++)
+    {
+      memset (mask_left[i], false, cols*sizeof(bool));
+      memset (mask_right[i], false, cols*sizeof(bool));
+    }
     if (p.enable_occlusion_layer)
     {
       shift_surface( p,
@@ -668,6 +740,8 @@ int main(int argc, char* argv[])
                      left_color,
                      right_color,
                      false,
+                     mask_left,
+                     mask_right,
                      S );
     }
 
@@ -676,6 +750,8 @@ int main(int argc, char* argv[])
                    left_color,
                    right_color,
                    p.hole_filling,
+                   mask_left,
+                   mask_right,
                    S );
 
     SDL_FillRect(stereo_color, NULL, 0x000000);
@@ -769,6 +845,11 @@ int main(int argc, char* argv[])
           {
             p.enable_occlusion_layer = !p.enable_occlusion_layer;
             printf ("Occlusion Layer: %d.\n", p.enable_occlusion_layer);
+          }
+          else if(event.key.keysym.sym == 'g')
+          {
+            p.enable_ghost = !p.enable_ghost;
+            printf ("Enable ghost: %d.\n", p.enable_ghost);
           }
 
           break;
