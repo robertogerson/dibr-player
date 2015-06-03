@@ -223,30 +223,32 @@ bool is_ghost(SDL_Surface *depth_map, int x, int y, int ghost_threshold)
 {
   int SUM = 0;
   int Dxy = 0;
+  int R = 1;
 
-  for (int i = x-1; i <= x+1; i++)
-    for(int j = y-1; j <= y+1; j++)
+  for (int i = x-R; i <= x+R; i++)
+    for(int j = y-R; j <= y+R; j++)
       if (i >= 0 && i < depth_map->w &&
           j >= 0 && j < depth_map->h)
       {
-        Uint32 pixel = sdl_get_pixel(depth_map, x, y);
+
+        Uint32 pixel = sdl_get_pixel(depth_map, i, j);
         Uint8 r, g, b;
         SDL_GetRGB (pixel, depth_map->format, &r, &g, &b);
         int Y, U, V;
         get_YUV(r, g, b, Y, U, V);
-        int D = Y;
 
-        SUM += D;
+        if (i == x && j == y) 
+          Dxy = Y;
 
-        if (i == x && j == y) Dxy = D;
+        SUM += Y;
       }
 
 
-  if (abs(SUM - 9*Dxy) > ghost_threshold)
-  {
-    printf ("%d %d %d %d\n", x, y, SUM, Dxy);
+//  printf ("%f ", (SUM - (pow(R, 2) + 1) * Dxy));
+
+//  if (SUM - ((pow(R, 2) + 1)*Dxy) >= ghost_threshold)
+  if (SUM - 9*Dxy > ghost_threshold)
     return true;
-  }
 
   return false;
 }
@@ -304,7 +306,8 @@ bool shift_surface ( user_params &p,
       if (r == 0 && g == 0 && b == 0)
         continue;
 
-      if (p.enable_ghost && is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
+      if ( p.enable_ghost && 
+           is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
         continue;
 
       if( x + S - shift < cols)
@@ -371,7 +374,8 @@ bool shift_surface ( user_params &p,
       int D = Y;
       int shift = depth_shift_table_lookup [D];
 
-      if (p.enable_ghost && is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
+      if ( p.enable_ghost && 
+           is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
         continue;
 
       pixel = sdl_get_pixel(image_color, x, y);
@@ -596,7 +600,7 @@ void set_default_params(user_params &p)
   p.enable_occlusion_layer = false;
   p.eye_sep = 6;
   p.enable_ghost = false;
-  p.ghost_threshold = 1;
+  p.ghost_threshold = 20;
 
   /* Gaussian filter parameters */
   p.sigmax = 500.0;
