@@ -16,5 +16,8 @@ DIBR new features:
     - Background information
     - In-painting,
     - Gradient-based.
+  * Separation between cracks, holes and contours, and different hole filling
+    approaches. -> The necessity became clear after the occlusion layer
+    integration.
   * Support for YUV files.
 
