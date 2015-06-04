@@ -81,6 +81,7 @@ struct user_params
   double eye_sep;
   int ghost_threshold;
   bool enable_ghost;
+  bool enable_splat;
 
   /* Gaussian filter parameters */
   double sigmax;
@@ -175,7 +176,7 @@ SDL_Surface* filter_depth( SDL_Surface* depth_frame,
 }
 
 /****************** 3D Warping related functions ******************************/
-int find_shiftMC3( user_params &p,
+double find_shiftMC3( user_params &p,
                    int depth, int Ny)
 {
   int h;
@@ -269,7 +270,7 @@ bool shift_surface ( user_params &p,
   // Maximun shift comes at depth == 0
   int N = 256; // Number of depth-planes
   // int S = 58;
-  int depth_shift_table_lookup[N];
+  double depth_shift_table_lookup[N];
   int cols = image_color->w, rows = image_color->h;
 
   // \fixme remove from here
@@ -298,7 +299,7 @@ bool shift_surface ( user_params &p,
       int Y, U, V;
       get_YUV(r, g, b, Y, U, V);
       int D = Y;
-      int shift = depth_shift_table_lookup [D];
+      double shift = depth_shift_table_lookup [D];
 
       pixel = sdl_get_pixel(image_color, x, y);
       SDL_GetRGB (pixel, image_color->format, &r, &g, &b);
@@ -310,11 +311,32 @@ bool shift_surface ( user_params &p,
            is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
         continue;
 
-      if( x + S - shift < cols)
+      if( x + S - shift < cols &&
+          x + S - shift >= 0)
       {
         sdl_put_pixel( left_image, x + S-shift, y,
                        sdl_get_pixel (image_color, x, y) );
-        mask [y][x+S-shift] = 1;
+
+        mask [(int)(x+S-shift)][y] = 1;
+      }
+
+      if (p.enable_splat)
+      {
+        if( x + S - shift + 0.5 < cols && 
+            x + S - shift + 0.5 >= 0)
+        {
+          sdl_put_pixel( left_image, x + S-shift + 0.5, y,
+                         sdl_get_pixel (image_color, x, y) );
+          mask [(int)(x+S-shift + 0.5)][y] = 1;
+        }
+
+        if( x + S - shift - 0.5 < cols &&
+            x + S - shift - 0.5 >= 0)
+        {
+          sdl_put_pixel( left_image, x + S-shift - 0.5, y,
+                       sdl_get_pixel (image_color, x, y) );
+          mask [(int)(x+S-shift - 0.5)][y] = 1;
+        }
       }
     }
 
@@ -322,7 +344,7 @@ bool shift_surface ( user_params &p,
     {
       for (int x = 1; x < cols; x++)
       {
-        if ( mask[y][x] == 0 )
+        if ( mask[x][y] == 0 )
         {
           if ( x - 7 < 0)
           {
@@ -372,7 +394,7 @@ bool shift_surface ( user_params &p,
       int Y, U, V;
       get_YUV(r, g, b, Y, U, V);
       int D = Y;
-      int shift = depth_shift_table_lookup [D];
+      double shift = depth_shift_table_lookup [D];
 
       if ( p.enable_ghost && 
            is_ghost(depth_frame_filtered, x, y, p.ghost_threshold))
@@ -384,11 +406,32 @@ bool shift_surface ( user_params &p,
       if (r == 0 && g == 0 && b == 0)
         continue;
 
-      if( x + shift - S >= 0 )
+      if( ((x + shift - S) >= 0) &&
+          ((int)(x + shift - S) < cols))
       {
         sdl_put_pixel ( right_image, x + shift - S, y,
                         sdl_get_pixel (image_color, x, y) );
-        mask [y][x+shift-S] = 1;
+        mask [(int)(x+shift-S)][y] = 1;
+      }
+
+      if (p.enable_splat)
+      {
+        if( x + shift - S - 0.5 >= 0 && 
+            x + shift - S + 0.5 < cols) 
+        {
+          sdl_put_pixel ( right_image, x + shift - S - 0.5, y,
+                          sdl_get_pixel (image_color, x, y) );
+          mask [(int)(x+shift-S - 0.5)][y] = 1;
+        }
+
+        if( x + shift - S + 0.5 >= 0 &&
+            x + shift - S + 0.5 < cols)
+        {
+          sdl_put_pixel ( right_image, x + shift - S + 0.5, y,
+                          sdl_get_pixel (image_color, x, y) );
+          mask [(int)(x+shift-S + 0.5)][y] = 1;
+        }
+
       }
     }
 
@@ -396,7 +439,7 @@ bool shift_surface ( user_params &p,
     {
       for (int x = cols-1 ; x >= 0; --x)
       {
-        if ( mask[y][x] == 0 )
+        if ( mask[x][y] == 0 )
         {
           if ( x + 7 > cols - 1)
           {
@@ -601,6 +644,7 @@ void set_default_params(user_params &p)
   p.eye_sep = 6;
   p.enable_ghost = false;
   p.ghost_threshold = 20;
+  p.enable_splat = true;
 
   /* Gaussian filter parameters */
   p.sigmax = 500.0;
@@ -693,14 +737,14 @@ int main(int argc, char* argv[])
   ctx.frame_count = 0;
 
   // allocate mask matrix
-  int rows = image_color->h;
   int cols = image_color->w;
-  bool **mask_left = (bool **)malloc(rows * sizeof(bool*));
-  bool **mask_right = (bool **)malloc(rows * sizeof(bool*));
-  for (int i = 0; i < rows; i++)
+  int rows = image_color->h;
+  bool **mask_left = (bool **)malloc(cols * sizeof(bool*));
+  bool **mask_right = (bool **)malloc(cols * sizeof(bool*));
+  for (int i = 0; i < cols; i++)
   {
-    mask_left[i] = (bool*) malloc(cols * sizeof(bool));
-    mask_right[i] = (bool*) malloc(cols * sizeof(bool));
+    mask_left[i] = (bool*) malloc(rows * sizeof(bool));
+    mask_right[i] = (bool*) malloc(rows * sizeof(bool));
   }
     
 
@@ -730,10 +774,10 @@ int main(int argc, char* argv[])
     SDL_FillRect(left_color, NULL, 0xFFFFFF);
     SDL_FillRect(right_color, NULL, 0xFFFFFF);
 
-    for (int i = 0; i < rows; i++)
+    for (int i = 0; i < cols; i++)
     {
-      memset (mask_left[i], false, cols*sizeof(bool));
-      memset (mask_right[i], false, cols*sizeof(bool));
+      memset (mask_left[i], false, rows*sizeof(bool));
+      memset (mask_right[i], false, rows*sizeof(bool));
     }
     if (p.enable_occlusion_layer)
     {
@@ -854,6 +898,11 @@ int main(int argc, char* argv[])
           {
             p.enable_ghost = !p.enable_ghost;
             printf ("Enable ghost: %d.\n", p.enable_ghost);
+          }
+          else if(event.key.keysym.sym == 's')
+          {
+            p.enable_splat = !p.enable_splat;
+            printf ("Enable splat: %d.\n", p.enable_ghost);
           }
 
           break;
