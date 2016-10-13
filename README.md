@@ -16,11 +16,13 @@ Dependencies
 
 Compilation Instructions
 ========================
+`dibr-player` uses [premak
 Before compiling, make sure you have the above dependencies installed and
-accessible in common directories (/usr/lib, /usr/include/ etc.). If so, the
-only think you need to do is run:
+accessible in common directories (/usr/lib, /usr/include/ etc.). If so, in a
+Linux environment you can easily run:
 
 ```bash
+  $ premake5 gmake
   $ make
 ```
 
@@ -31,7 +33,7 @@ Usage
 =====
 
 ```bash
-  $ ./dibr-player samples/images/flower04.jpg
+  $ ./bin/debug/dibr-player samples/images/flower04.jpg
 ```
 
 Keyboard shortcuts

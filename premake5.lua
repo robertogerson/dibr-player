@@ -1,8 +1,8 @@
 -- premake5.lua
-workspace "DibrPlayer"
-   configurations { "Debug", "Release" }
+workspace "dibr-player"
+   configurations { "debug", "release" }
 
-project "DibrPlayer"
+project "dibr-player"
    kind "ConsoleApp"
    language "C++"
    targetdir "bin/%{cfg.buildcfg}"
@@ -10,10 +10,10 @@ project "DibrPlayer"
    files { "**.h", "**.cc" }
    links { "GL", "GLU", "SDL", "SDL_image", "vlc" }
 
-   filter "configurations:Debug"
+   filter "configurations:debug"
       defines { "DEBUG" }
       symbols "On"
 
-   filter "configurations:Release"
+   filter "configurations:release"
       defines { "NDEBUG" }
       optimize "On"
