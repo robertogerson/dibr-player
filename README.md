@@ -4,7 +4,8 @@ This is a simple depth-image-based rendering (DIBR) player. DIBR is the process
 of generating virtual views from original ones and depth-frames. In special,
 this project is intended to generate a stereoscopic-pair from one texture and
 one depth images. For now, the input for this program is a side-by-side image or
-video in which the left image is the texture, and the right image is the depth.
+video in which the left image is the texture, and the right image is the depth
+map.
 
 Dependencies
 ============
