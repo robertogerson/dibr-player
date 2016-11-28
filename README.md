@@ -45,6 +45,32 @@ Keyboard shortcuts
   - k   - decrease the baseline distance between left and right eyes.
   - ESC - close the program.
 
+TODO List
+=========
+
+Options:
+
+  * Add option to configure if the image/video contains an occlusion layer.
+  * Add parameter to show filtered depth.
+  * Add keyboard shortcut (or command-line option) to change output format.
+  * Generate N images from minimum to maximum disparity (it can be useful for 
+    multi-view and 'GIF-like' animation).
+
+DIBR new features:
+
+  * Support for occlusion layer.
+  * Advanced depth-filtering approaches:
+    - Adaptive filters, etc.
+  * Improved hole-filling techniques:
+    - Mixed-colors
+    - Background information
+    - In-painting,
+    - Gradient-based.
+  * Separation between cracks, holes and contours, and different hole filling
+    approaches. -> The necessity became clear after the occlusion layer
+    integration.
+  * Support for YUV files.
+
 
 ----
 Copyright (C) 2014-2015 Roberto Azevedo
