@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 3.5)
 
 project(dibr-player)
 
+set(Boost_USE_STATIC_LIBS ON)
 find_package( Boost 1.40 COMPONENTS program_options REQUIRED )
+
 find_package (OpenCV REQUIRED)
 find_package (OpenCL REQUIRED)
 
@@ -18,7 +20,7 @@ target_link_libraries(dibr-player-cpu
 
 include_directories ( opencl )
 
-add_executable(dibr-player-opencl
+add_executable( dibr-player-opencl
                 opencl/yuv.cpp
                 opencl/main.cpp)
 
