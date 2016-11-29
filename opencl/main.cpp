@@ -17,6 +17,7 @@
 #include <sstream>
 #include <ctime>
 #include <sys/time.h>
+using namespace std;
 
 //File mime-type
 #include <magic.h>
@@ -32,13 +33,11 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 #include "opencv2/imgproc/imgproc_c.h"
+using namespace cv;
 
 //Boost::program_options
 #include <boost/program_options.hpp>
 namespace po = boost::program_options;
-
-using namespace cv;
-using namespace std;
 
 //OpenCL Header files
 #include <CL/opencl.h>
@@ -55,7 +54,7 @@ bool must_update = false, paused = false;
 bool enable_hole_filling = true;
 bool enable_dist = true;
 bool output_video = false;
-int  is_stereo = true; //(opts['s'] == "1");
+int  is_stereo = true;
 int  use_opencl = false;
 int  is_input_video = 0;
 //end options
@@ -146,28 +145,6 @@ int main(int argc,char *argv[])
     use_opencl = true;
 
   cout << width << "x" << height << endl;
-
-#ifdef ENABLE_EYE_TRACKING
-  bool enable_head_tracking = ( opts.count('t') ) && ( opts['t'] == "1");
-  // begin eye tracking
-  // Open webcam
-  VideoCapture cap(0);
-  cv::Mat frame, eye_tpl;
-  cv::Rect eye_bb;
-  if(enable_head_tracking)
-  {
-    face_cascade.load("/usr/share/opencv/haarcascades/haarcascade_frontalface_alt2.xml");
-    // Check if everything is ok
-    if (face_cascade.empty() || !cap.isOpened())
-      return 1;
-
-    // Set video to 320x240
-    cap.set(CV_CAP_PROP_FRAME_WIDTH, 320);
-    cap.set(CV_CAP_PROP_FRAME_HEIGHT, 240);
-  }
-  // end eye tracking
-#endif
-
 
 #if YUV_INPUT
   FILE  *fin = NULL, *fin_depth = NULL;
@@ -284,10 +261,12 @@ int main(int argc,char *argv[])
   o.init();
   //loading the program and kernel source
   o.load_demo(&program, &kernel[0]);
+
   cout << "#Decode\tResize\tCrop\tFilter\tDIBR\tShow" << endl;
+
   for(;;)
   {
-//     gettimeofday(&now, NULL);
+    // gettimeofday(&now, NULL);
 
     memset(pixelMutex, 0, input.cols * input.rows * sizeof(int));
     isHole.setTo(cv::Scalar(0));
@@ -438,46 +417,6 @@ int main(int argc,char *argv[])
 
     if(!handle_key(key)) // It will return false if key is ESC
         break;
-
-#ifdef ENABLE_EYE_TRACKING
-    cap >> frame;
-    if (frame.empty())
-      break;
-
-    if(enable_head_tracking)
-    {
-      // Flip the frame horizontally, Windows users might need this
-      cv::flip(frame, frame, 1);
-
-      // Convert to grayscale and
-      // adjust the image contrast using histogram equalization
-      cv::Mat gray;
-      cv::cvtColor(frame, gray, CV_BGR2GRAY);
-
-
-      if (eye_bb.width == 0 && eye_bb.height == 0)
-      {
-        // Detection stage
-        // Try to detect the face and the eye of the user
-        detectEye(gray, eye_tpl, eye_bb);
-      }
-      else
-      {
-        // Tracking stage with template matching
-        trackEye(gray, eye_tpl, eye_bb);
-
-        // Draw bounding rectangle for the eye
-        cv::rectangle(frame, eye_bb, CV_RGB(0,255,0));
-
-        eye_sep = 6 - (eye_bb.x)/ 5;
-        update_depth_shift_lookup_table();
-        must_update;
-      }
-    }
-
-    // Display video
-    cv::imshow("video", frame);
-#endif
   }
 
   printf ("Mean: %.3f fps\n", (total_frames / total_time) * 1000.0);
