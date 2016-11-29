@@ -2,18 +2,19 @@ cmake_minimum_required(VERSION 3.5)
 
 project(dibr-player)
 
+find_package( Boost 1.40 COMPONENTS program_options REQUIRED )
+find_package (OpenCV REQUIRED)
+find_package (OpenCL REQUIRED)
+
 add_executable(dibr-player-cpu 
                 cpu/dibr-player.cc)
 
 target_link_libraries(dibr-player-cpu
-                      general
+                      ${Boost_LIBRARIES}
                       SDL
                       GL
                       vlc)
 
-
-find_package (OpenCV REQUIRED)
-find_package (OpenCL REQUIRED)
 
 include_directories ( opencl )
 
@@ -23,6 +24,7 @@ add_executable(dibr-player-opencl
 
 target_link_libraries( dibr-player-opencl
                        general
+                       ${Boost_LIBRARIES}
                        ${OpenCL_LIBRARIES}
                        ${OpenCV_LIBRARIES} )
 

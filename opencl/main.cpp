@@ -18,9 +18,6 @@
 #include <ctime>
 #include <sys/time.h>
 
-//Options parse
-#include <options.h>
-
 //File mime-type
 #include <magic.h>
 
@@ -35,6 +32,10 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 #include "opencv2/imgproc/imgproc_c.h"
+
+//Boost::program_options
+#include <boost/program_options.hpp>
+namespace po = boost::program_options;
 
 using namespace cv;
 using namespace std;
@@ -109,20 +110,40 @@ bool handle_key(int key)
 
 int main(int argc,char *argv[])
 {
-  parse_opts(argc, argv); // First, parse the user options
+  po::options_description desc("Allowed options");
+  desc.add_options()
+      ("help",          "produce this help message")
+      ("fullscreen,f",  "use fullscreen mode")
+      ("opencl,o",      "use opencl")
+      ("stereo,s",      "generate stereo pair")
+      ("width,w",       po::value<int>(), "window width")
+      ("height,h",      po::value<int>(), "window height")
+      ("input,i",       po::value<string>(), "input texture file")
+      ("depth,d",       po::value<string>(), "input depth file")
+      ;
 
-  use_opencl = (opts['o'] == "1");
-  if (opts.count('w'))
+  po::positional_options_description p;
+  p.add("input", 1);
+  p.add("depth", 2);
+
+  po::variables_map vm;
+  po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
+  po::notify(vm);
+
+  if (vm.count("help"))
   {
-    std::istringstream ss(opts['w']);
-    ss >> width;
+    cout << desc << "\n";
+    return 1;
   }
 
-  if (opts.count('h'))
-  {
-    std::istringstream ss(opts['h']);
-    ss >> height;
-  }
+  if (vm.count("width"))
+    width = vm["width"].as<int>();
+
+  if(vm.count("height"))
+    height = vm["height"].as<int>();
+
+  if(vm.count("opencl"))
+    use_opencl = true;
 
   cout << width << "x" << height << endl;
 
@@ -153,19 +174,18 @@ int main(int argc,char *argv[])
   struct YUV_Capture cap, cap_depth;
   enum YUV_ReturnValue ret;
   IplImage *bgr, *bgr_depth;
+  string filename_tex = vm["input"].as<string>();
+  string filename_depth = vm["depth"].as<string>();
 
-  fin = fopen (opts['i'].c_str(), "rb");
+  fin = fopen (filename_tex.c_str(), "rb");
   if (!fin)
-  {
-    fprintf (stderr, "error: unable to open file: %s\n", opts['i'].c_str());
-  }
+    fprintf (stderr, "error: unable to open file: %s\n", filename_tex.c_str());
 
-  fin_depth = fopen (opts['d'].c_str(), "rb");
+  fin_depth = fopen (filename_depth.c_str(), "rb");
 
   if (!fin)
-  {
-    fprintf (stderr, "error: unable to open file: %s\n", opts['i'].c_str());
-  }
+    fprintf (stderr, "error: unable to open file: %s\n", filename_depth.c_str());
+
   ret = YUV_init(fin, 1920, 1088, &cap);
   assert (ret == YUV_OK);
 
@@ -255,7 +275,7 @@ int main(int argc,char *argv[])
   cl_program program;
 
   // Output Window
-  bool fullscreen = opts.count('f');
+  bool fullscreen = vm.count("fullscreen");
   cvNamedWindow("Output", CV_WINDOW_NORMAL);
 
   update_depth_shift_lookup_table();
