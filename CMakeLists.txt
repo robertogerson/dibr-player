@@ -26,4 +26,6 @@ target_link_libraries( dibr-player-opencl
                        ${OpenCL_LIBRARIES}
                        ${OpenCV_LIBRARIES} )
 
+# Copy .cl file into build dir
+configure_file(opencl/convolution.cl convolution.cl COPYONLY)
 
