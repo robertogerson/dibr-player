@@ -13,7 +13,6 @@ depth map.
   * GLU 
   * SDL 1.2.x
   * libvlc
-
   * OpenCL
   * libboost-program-options
 
