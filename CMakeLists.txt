@@ -1,21 +1,25 @@
 cmake_minimum_required(VERSION 3.5)
 
 project(dibr-player)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMakeModules")
 
 set(Boost_USE_STATIC_LIBS ON)
 find_package( Boost 1.40 COMPONENTS program_options REQUIRED )
 
 find_package (OpenCV REQUIRED)
 find_package (OpenCL REQUIRED)
+find_package (LibMagic REQUIRED)
+find_package (LIBVLC REQUIRED)
+find_package (SDL REQUIRED)
 
-add_executable(dibr-player-cpu 
+add_executable (dibr-player-cpu 
                 cpu/dibr-player.cc)
 
-target_link_libraries(dibr-player-cpu
-                      ${Boost_LIBRARIES}
-                      SDL
-                      GL
-                      vlc)
+target_link_libraries (dibr-player-cpu
+                       ${Boost_LIBRARIES}
+                       SDL
+                       GL
+                       vlc )
 
 
 include_directories ( opencl )
