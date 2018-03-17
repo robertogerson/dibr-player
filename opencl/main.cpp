@@ -65,7 +65,7 @@ Mat image, input, output;
 // Some configuration sets
 #define EYE_SEP_STEP 0.25
 #define CONV_KERNEL_SIZE 9
-#define YUV_INPUT 1
+#define YUV_INPUT 0
 
 double sigmax = 10.0, sigmay = 90;  // assymetric gaussian filter
 double conv_kernel [CONV_KERNEL_SIZE];
@@ -176,29 +176,31 @@ int main(int argc,char *argv[])
   assert(bgr);
 
 #else
-  VideoCapture inputVideo(opts['i']);              // Open input
-  inputVideo.set(CV_CAP_PROP_FPS, 10);
+  VideoCapture inputVideo (vm["input"].as<string> ()); // Open input
+  inputVideo.set (CV_CAP_PROP_FPS, 10);
 
   if (!inputVideo.isOpened())
   {
-    cout  << "Could not open the input video: " << opts['i'] << endl;
+    cout  << "Could not open the input video: " << vm["input"].as<string> ()
+          << endl;
     return -1;
   }
+
   inputVideo >> image;
 
-  int ex = static_cast<int>(inputVideo.get(CV_CAP_PROP_FOURCC));
+//  int ex = static_cast<int>(inputVideo.get(CV_CAP_PROP_FOURCC));
 
-  VideoWriter outputVideo;
-  if(opts.count('u'))
-  {
-    output_video = true;
-    outputVideo.open( opts['u'].c_str(),
-                      CV_FOURCC('P', 'I', 'M', '1'),
-                      inputVideo.get(CV_CAP_PROP_FPS),
-                      Size(width, height), true);
+//  VideoWriter outputVideo;
+//  if(vm.count('u'))
+//  {
+//    output_video = true;
+//    outputVideo.open( vm['u'].as<string> (),
+//                      CV_FOURCC('P', 'I', 'M', '1'),
+//                      inputVideo.get(CV_CAP_PROP_FPS),
+//                      Size(width, height), true);
 
-    cout << "create output video " << opts['u'].c_str() << endl;
-  }
+//    cout << "create output video " << vm['u'].as<string> () << endl;
+//  }
 #endif
 
   // Get mime-type of input
@@ -228,11 +230,11 @@ int main(int argc,char *argv[])
   // if(is_stereo)
   //   input_cols /= 2;
 
-  color.create(input_rows, input_cols, CV_8UC(3));
-  depth.create(input_rows, input_cols, CV_8UC(1));
-  depth_filtered.create(input_rows, input_cols, CV_8UC(3));
-  border.create(input_rows, input_cols, CV_8UC(1));
-  dist.create(input_rows, input_cols, CV_32F);
+  color.create (input_rows, input_cols, CV_8UC(3));
+  depth.create (input_rows, input_cols, CV_8UC(1));
+  depth_filtered.create (input_rows, input_cols, CV_8UC(3));
+  border.create (input_rows, input_cols, CV_8UC(1));
+  dist.create (input_rows, input_cols, CV_32F);
 
   //Output info
   int out_rows = input.rows;
@@ -255,7 +257,7 @@ int main(int argc,char *argv[])
   bool fullscreen = vm.count("fullscreen");
   cvNamedWindow("Output", CV_WINDOW_NORMAL);
 
-  update_depth_shift_lookup_table();
+  update_depth_shift_lookup_table ();
 
   //initialising opencl structures
   o.init();
@@ -320,23 +322,23 @@ int main(int argc,char *argv[])
 #endif
       }
 
-      /*
-      gettimeofday(&end, NULL);
-      diff = timeval_subtract(&result, &end, &now);
-      cout << (float)diff << "\t";
 
-      gettimeofday(&now, NULL);
+//      gettimeofday(&end, NULL);
+//      diff = timeval_subtract(&result, &end, &now);
+//      cout << (float)diff << "\t";
+
+//      gettimeofday(&now, NULL);
       resize(image, input, input.size(), 0, 0, INTER_NEAREST);
-      gettimeofday(&end, NULL);
-      diff = timeval_subtract(&result, &end, &now);
-      cout << (float)diff << "\t";
+//      gettimeofday(&end, NULL);
+//      diff = timeval_subtract(&result, &end, &now);
+//      cout << (float)diff << "\t";
 
-      gettimeofday(&now, NULL);
+//      gettimeofday(&now, NULL);
       Mat cropped = input(Rect(0, 0, (input.cols / 2), input.rows));
       cropped.copyTo(color);
       cropped = input(Rect((input.cols / 2), 0, (input.cols / 2), input.rows));
       cvtColor(cropped, depth, CV_RGB2GRAY);
-      */
+
       // gettimeofday(&now, NULL);
       // bilateralFilter ( cropped, depth, 15, 100, 100, BORDER_ISOLATED );
       // GaussianBlur(cropped, depth, Size (101, 101), 10, 90);
